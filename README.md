@@ -59,17 +59,27 @@ Then a review takes three steps:
 
 | | Where | What to type | What happens |
 |---|---|---|---|
-| **1** | your agent | `/diffdeck-breakdown` | The agent reads the diff and draws the diagrams, flowcharts and design alternatives |
-| **2** | terminal | `diffdeck` | The review opens in your browser. Explore it, comment, approve, and pick alternatives |
+| **1** | your agent | `/diffdeck-breakdown <PR link>` | The agent reads the pull request and draws the diagrams, flowcharts and design alternatives |
+| **2** | terminal | `diffdeck` | The review of that PR opens in your browser. Explore it, comment, approve, and pick alternatives |
 | **3** | your agent | `/diffdeck-apply` | The agent implements your feedback |
-| *or 3* | browser | **Finish review → Post on GitHub** | Your notes become a PR review with inline comments |
+| *or 3* | browser | **Finish review**, then **Post on GitHub** | Your notes become a PR review with inline comments |
 
-The order of steps 1 and 2 doesn't matter. If you run `diffdeck` first, the page
-shows the changed files right away and redraws itself when the agent finishes.
+For example:
 
-> **Agent without slash commands?** Tell it *"Run `diffdeck prepare`, then follow
-> `.diffdeck/AGENT_TASK.md`"* for step 1, and *"Implement `.diffdeck/feedback.md`"*
-> for step 3. All communication happens through plain files, so every agent can take part.
+```
+/diffdeck-breakdown https://github.com/your-org/your-repo/pull/42
+```
+
+If you run `/diffdeck-breakdown` without a link, the agent asks you for one before doing
+anything. If you have no pull request yet, tell it which base branch to compare against
+instead.
+
+Once a PR has been prepared, plain `diffdeck` keeps reviewing that PR. Run
+`diffdeck review <other PR link>` to switch.
+
+> **Agent without slash commands?** For step 1, tell it *"Run `diffdeck prepare --pr <PR link>`,
+> then follow `.diffdeck/AGENT_TASK.md`"*. For step 3, tell it *"Implement `.diffdeck/feedback.md`"*.
+> All communication happens through plain files, so every agent can take part.
 
 ## What you get
 
@@ -78,11 +88,11 @@ shows the changed files right away and redraws itself when the agent finishes.
 The home screen shows the parts of your system that the change touches, such as callers,
 modules, services, caches and config, and how they connect.
 
-- 🟩 **Added**, 🟦 **changed**, 🟥 **removed** (dashed and struck through), ⬜ unchanged context
+- Colors show what changed: green for **added**, blue for **changed**, red with a dashed, struck-through outline for **removed**, and white for unchanged context
 - **Hover** a node to trace its connections; the related edges animate and everything else fades
 - **Click** a node to open that change
-- **▶ Walk through** moves from one change to the next in the suggested reading order
-- Drag to pan; pinch or ⌘/Ctrl-scroll to zoom; **⤢** fits the diagram to the screen
+- **Walk through** moves from one change to the next in the suggested reading order
+- Drag to pan; pinch or Cmd/Ctrl-scroll to zoom; the **fit** button fits the diagram to the screen
 
 <img src="docs/walkthrough.png" alt="Guided walkthrough highlighting one change at a time" width="100%">
 
@@ -92,8 +102,8 @@ Each change opens on a flowchart of what the code does after the change: steps,
 decision diamonds with yes/no branches, and I/O steps.
 
 - **Click a step** to jump to the code diff with exactly those lines highlighted
-- **Click a ◇ decision** to compare the design alternatives side by side
-- Choose **Prefer this approach**, and the diagram marks the switch (`→ Idempotent methods only`)
+- **Click a decision diamond** to compare the design alternatives side by side
+- Choose **Prefer this approach**, and the diagram labels the diamond with the alternative you picked
 
 <img src="docs/logic.png" alt="Logic flowchart with a decision's alternatives, pros and cons" width="100%">
 
@@ -163,9 +173,10 @@ Files: `src/client.js`
 
 | Command | What it does |
 |---|---|
-| `diffdeck` | Reviews the current branch against `main`/`master` (auto-detected; uncommitted edits included) and opens the browser |
+| `diffdeck` | Reviews the PR prepared earlier; if there is none, reviews the current branch against `main`/`master` (auto-detected; uncommitted edits included). Opens the browser |
+| `diffdeck review <PR link>` | Reviews a GitHub pull request (requires the [`gh`](https://cli.github.com) CLI) |
 | `diffdeck review <base>` | Reviews against another branch, e.g. `diffdeck review develop` |
-| `diffdeck review --pr 42` | Reviews a GitHub pull request (requires the [`gh`](https://cli.github.com) CLI) |
+| `diffdeck review --pr 42` | The same, by PR number in the current repository |
 | `diffdeck review --staged` | Reviews only staged changes |
 | `diffdeck review --worktree` | Reviews uncommitted changes against `HEAD` |
 | `diffdeck demo` | Opens the sample review |
@@ -188,29 +199,29 @@ references would no longer match.
 
 | Agent | Setup | Step 1 | Step 3 |
 |---|---|---|---|
-| Claude Code | `diffdeck init claude` → `.claude/commands/` | `/diffdeck-breakdown` | `/diffdeck-apply` |
-| Cursor | `diffdeck init cursor` → `.cursor/commands/` | `/diffdeck-breakdown` | `/diffdeck-apply` |
-| OpenCode | `diffdeck init opencode` → `.opencode/command/` | `/diffdeck-breakdown` | `/diffdeck-apply` |
-| Anything else | add the snippet `diffdeck init` prints to `AGENTS.md` | "follow `.diffdeck/AGENT_TASK.md`" | "implement `.diffdeck/feedback.md`" |
+| Claude Code | `diffdeck init claude` (writes `.claude/commands/`) | `/diffdeck-breakdown <PR link>` | `/diffdeck-apply` |
+| Cursor | `diffdeck init cursor` (writes `.cursor/commands/`) | `/diffdeck-breakdown <PR link>` | `/diffdeck-apply` |
+| OpenCode | `diffdeck init opencode` (writes `.opencode/command/`) | `/diffdeck-breakdown <PR link>` | `/diffdeck-apply` |
+| Anything else | add the snippet `diffdeck init` prints to `AGENTS.md` | "run `diffdeck prepare --pr <PR link>`, then follow `.diffdeck/AGENT_TASK.md`" | "implement `.diffdeck/feedback.md`" |
 
-Slash commands accept the same arguments as `diffdeck review`, e.g. `/diffdeck-breakdown --pr 42`.
+`/diffdeck-breakdown` needs a pull request link. Without one, the agent asks for it first.
 
 ## How it works
 
 ```
-  git diff / gh pr diff
-          │
-          ▼
-  diffdeck prepare ──► .diffdeck/diff.patch, hunks.md, AGENT_TASK.md, breakdown.schema.json
-          │
-          ▼
-  your agent ────────► .diffdeck/breakdown.json   (system flow, cards, logic flows, decisions)
-          │
-          ▼
-  diffdeck (browser) ─► .diffdeck/feedback.md     (saved as you review)
-          │
-          ▼
-  your agent ────────► code changes
+  gh pr diff <PR link>  (or git diff)
+          |
+          v
+  diffdeck prepare  -->  .diffdeck/diff.patch, hunks.md, AGENT_TASK.md, breakdown.schema.json
+          |
+          v
+  your agent        -->  .diffdeck/breakdown.json   (system flow, cards, logic flows, decisions)
+          |
+          v
+  diffdeck (browser) --> .diffdeck/feedback.md      (saved as you review)
+          |
+          v
+  your agent        -->  code changes   (or: Post on GitHub as a PR review)
 ```
 
 Every file lives in `.diffdeck/` at the repository root. diffdeck adds that folder to

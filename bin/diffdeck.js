@@ -19,7 +19,8 @@ const HELP = `${c.b('diffdeck')} ${c.dim(`v${version}`)} — review a diff or PR
 ${c.b('Usage')}
   diffdeck                      Review this branch (auto-detects main/master) and open the browser
   diffdeck review <base>        Review against a branch, e.g. ${c.blue('diffdeck review develop')}
-  diffdeck review --pr <n>      Review a GitHub pull request (needs the gh CLI)
+  diffdeck review <PR link>     Review a GitHub pull request, e.g. https://github.com/org/repo/pull/42
+  diffdeck review --pr <n|link> Same, by number or link (needs the gh CLI)
   diffdeck review --staged      Review staged changes
   diffdeck review --worktree    Review uncommitted changes against HEAD
   diffdeck demo                 Open a sample review, no setup needed
@@ -40,7 +41,7 @@ ${c.b('Options')}
   -v, --version  Print the version
 
 ${c.b('Workflow')}
-  1. In your agent:  /diffdeck-breakdown      ${c.dim('(or: "follow .diffdeck/AGENT_TASK.md")')}
+  1. In your agent:  /diffdeck-breakdown <PR link>   ${c.dim('(the agent asks for the link if you leave it out)')}
   2. In a terminal:  diffdeck                 ${c.dim('(explore the diagram, comment, pick alternatives)')}
   3. In your agent:  /diffdeck-apply          ${c.dim('(or: "implement .diffdeck/feedback.md")')}
      or on GitHub:   Finish review → Post on GitHub  ${c.dim('(or: diffdeck post)')}
@@ -50,7 +51,7 @@ function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--pr' || a === '--port' || a === '--event') args[a.slice(2)] = argv[++i];
+    if (a === '--pr' || a === '--port' || a === '--event') args[a.slice(2)] = argv[i + 1] === undefined || argv[i + 1].startsWith('--') ? true : argv[++i];
     else if (a.startsWith('--')) args[a.slice(2)] = true;
     else args._.push(a);
   }
@@ -63,12 +64,25 @@ function openBrowser(url) {
   try { spawn(cmd, argv, { stdio: 'ignore', detached: true }).on('error', () => {}).unref(); } catch { /* ignore */ }
 }
 
+const PR_URL = /^(https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+\/pull\/\d+)(?:\/[\w-]+)*\/?(?:[#?].*)?$/;
+const prLink = (v) => { const m = PR_URL.exec(v); return m ? m[1] : v; }; // strip /files, /commits, #fragment
+
 function sourceOpts(root, args) {
-  if (args.pr && !/^\d+$/.test(args.pr)) throw new Error('--pr expects a number, e.g. --pr 42');
-  if (args.pr) return { pr: args.pr };
+  const first = args._[0];
+  if (first && PR_URL.test(first)) return { pr: prLink(first) };
+  if (first && /^https?:\/\//.test(first)) throw new Error(`"${first}" is not a pull request link. It should look like https://github.com/org/repo/pull/42`);
+  if (args.pr !== undefined) {
+    if (args.pr === true || !(/^\d+$/.test(args.pr) || PR_URL.test(args.pr))) throw new Error('--pr expects a PR number or link, e.g. --pr 42 or --pr https://github.com/org/repo/pull/42');
+    return { pr: prLink(args.pr) };
+  }
   if (args.staged) return { staged: true };
   if (args.worktree) return {};
-  if (args._[0]) return { base: args._[0] };
+  if (first) return { base: first };
+  // With no arguments, keep reviewing the PR an agent already prepared.
+  try {
+    const { meta } = JSON.parse(fs.readFileSync(path.join(workDir(root), 'diff.json'), 'utf8'));
+    if (meta.source === 'pr' && (meta.prUrl || meta.prNumber)) return { pr: String(meta.prUrl || meta.prNumber) };
+  } catch { /* nothing prepared yet */ }
   const base = defaultBase(root);
   return base ? { base } : {};
 }
@@ -78,6 +92,7 @@ function doPrepare(root, args) {
   const hunks = r.files.reduce((n, f) => n + f.hunks.length, 0);
   console.log(`${c.green('✓')} ${c.b(r.meta.label)}: ${r.files.length} files, ${hunks} hunks${r.unchanged ? c.dim(' (unchanged; breakdown and feedback kept)') : ''}`);
   if (!r.files.length) console.log(c.yellow('  The diff is empty. Try `diffdeck review <base>` or `--pr <n>`.'));
+  if (r.meta.repoMismatch) console.log(c.yellow(`  ${r.meta.repoMismatch}`));
   if (r.meta.untracked && r.meta.untracked.length) console.log(c.yellow(`  ${r.meta.untracked.length} untracked file(s) are not included; \`git add -N <file>\` to include them.`));
   return r;
 }

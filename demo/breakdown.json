@@ -1,0 +1,704 @@
+{
+  "title": "Retry transient HTTP failures and cache responses with a TTL",
+  "summary": "fetchJson now retries 5xx and network errors with exponential backoff and serves repeated GETs from an in-memory cache. The cache gains per-entry expiry, and timeouts, retries and TTL move into config.json.",
+  "reviewOrder": "Start with the retry loop \u2014 it changes failure behaviour for every caller \u2014 then the cache expiry it depends on.",
+  "cards": [
+    {
+      "id": "retry-loop",
+      "title": "Retry 5xx and network errors with exponential backoff",
+      "group": "Core logic",
+      "kind": "feature",
+      "risk": "high",
+      "riskNote": "Every caller of fetchJson now waits up to 200+400+800 ms before an error surfaces, and non-idempotent requests (POST) are retried too.",
+      "summary": "fetchJson loops up to config.retries + 1 times. 5xx responses and thrown network/timeout errors are retried after backoffMs * 2^attempt; 4xx responses are marked fatal and rethrown immediately.",
+      "why": "Upstream returns intermittent 502s under load; callers currently fail on the first blip.",
+      "refs": [
+        {
+          "file": "src/client.js",
+          "hunks": [
+            0
+          ]
+        }
+      ],
+      "decisions": [
+        {
+          "question": "Which failures should be retried?",
+          "chosen": {
+            "label": "5xx and network errors",
+            "description": "Retry server errors and anything thrown by fetch, including timeouts; 4xx fails immediately.",
+            "pros": [
+              "Covers 502/503 blips and dropped connections",
+              "Client errors fail fast with no wasted latency"
+            ],
+            "cons": [
+              "Retries POST/PATCH too, which can duplicate side effects",
+              "429 Too Many Requests is not retried even though it is transient"
+            ]
+          },
+          "alternatives": [
+            {
+              "label": "Idempotent methods only",
+              "description": "Retry only GET/HEAD/PUT/DELETE; pass other methods through once.",
+              "pros": [
+                "No duplicated writes",
+                "Matches HTTP semantics"
+              ],
+              "cons": [
+                "POST callers get no resilience",
+                "Needs a method check in the loop"
+              ],
+              "effort": "small"
+            },
+            {
+              "label": "Retry on 429 with Retry-After",
+              "description": "Also retry 429 and honour the Retry-After header for the delay.",
+              "pros": [
+                "Cooperates with upstream rate limits",
+                "Avoids hammering a throttled server"
+              ],
+              "cons": [
+                "Retry-After can be very long; needs a cap",
+                "More branches to test"
+              ],
+              "effort": "small"
+            }
+          ]
+        },
+        {
+          "question": "How should the delay between attempts be computed?",
+          "chosen": {
+            "label": "Plain exponential backoff",
+            "description": "Wait backoffMs * 2^attempt (200, 400, 800 ms).",
+            "pros": [
+              "Simple and predictable",
+              "Easy to reason about in tests"
+            ],
+            "cons": [
+              "Clients that failed together retry together (thundering herd)",
+              "Sleeps once more after the final attempt"
+            ]
+          },
+          "alternatives": [
+            {
+              "label": "Exponential with full jitter",
+              "description": "Wait random(0, backoffMs * 2^attempt).",
+              "pros": [
+                "Spreads retries from many clients",
+                "Industry default (AWS guidance)"
+              ],
+              "cons": [
+                "Non-deterministic; tests need a seeded random"
+              ],
+              "effort": "small"
+            },
+            {
+              "label": "Use a library (p-retry)",
+              "description": "Delegate the loop to p-retry with its built-in jitter and abort support.",
+              "pros": [
+                "Battle-tested edge cases",
+                "Less code to own"
+              ],
+              "cons": [
+                "New dependency",
+                "Its error-classification API differs from the fatal flag"
+              ],
+              "effort": "medium"
+            }
+          ]
+        }
+      ],
+      "flow": {
+        "nodes": [
+          {
+            "id": "s",
+            "label": "fetchJson(url, opts)",
+            "shape": "start",
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                6,
+                6
+              ]
+            }
+          },
+          {
+            "id": "hit",
+            "label": "Cached and not noCache?",
+            "shape": "decision",
+            "change": "added",
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                7,
+                8
+              ]
+            }
+          },
+          {
+            "id": "rc",
+            "label": "Return cached body",
+            "shape": "end",
+            "change": "added",
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                8,
+                8
+              ]
+            }
+          },
+          {
+            "id": "req",
+            "label": "fetch() with config.timeout",
+            "shape": "io",
+            "change": "modified",
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                13,
+                13
+              ]
+            }
+          },
+          {
+            "id": "retryable",
+            "label": "5xx or network error?",
+            "shape": "decision",
+            "change": "added",
+            "decision": 0,
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                14,
+                14
+              ]
+            }
+          },
+          {
+            "id": "fatal",
+            "label": "4xx response?",
+            "shape": "decision",
+            "change": "added",
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                15,
+                15
+              ]
+            }
+          },
+          {
+            "id": "throw4",
+            "label": "Throw immediately",
+            "shape": "end",
+            "change": "added",
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                20,
+                20
+              ]
+            }
+          },
+          {
+            "id": "left",
+            "label": "Attempts left?",
+            "shape": "decision",
+            "change": "added",
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                11,
+                11
+              ]
+            }
+          },
+          {
+            "id": "sleep",
+            "label": "Sleep backoffMs \u00d7 2\u207f",
+            "shape": "step",
+            "change": "added",
+            "decision": 1,
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                22,
+                22
+              ]
+            }
+          },
+          {
+            "id": "throwlast",
+            "label": "Throw last error",
+            "shape": "end",
+            "change": "added",
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                25,
+                25
+              ]
+            }
+          },
+          {
+            "id": "store",
+            "label": "Cache body with TTL",
+            "shape": "io",
+            "change": "added",
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                16,
+                17
+              ]
+            }
+          },
+          {
+            "id": "ret",
+            "label": "Return body",
+            "shape": "end",
+            "ref": {
+              "file": "src/client.js",
+              "lines": [
+                18,
+                18
+              ]
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "s",
+            "to": "hit"
+          },
+          {
+            "from": "hit",
+            "to": "rc",
+            "label": "yes",
+            "change": "added"
+          },
+          {
+            "from": "hit",
+            "to": "req",
+            "label": "no",
+            "change": "added"
+          },
+          {
+            "from": "req",
+            "to": "retryable"
+          },
+          {
+            "from": "retryable",
+            "to": "left",
+            "label": "yes",
+            "change": "added"
+          },
+          {
+            "from": "retryable",
+            "to": "fatal",
+            "label": "no"
+          },
+          {
+            "from": "fatal",
+            "to": "throw4",
+            "label": "yes",
+            "change": "added"
+          },
+          {
+            "from": "fatal",
+            "to": "store",
+            "label": "no"
+          },
+          {
+            "from": "left",
+            "to": "sleep",
+            "label": "yes",
+            "change": "added"
+          },
+          {
+            "from": "left",
+            "to": "throwlast",
+            "label": "no",
+            "change": "added"
+          },
+          {
+            "from": "sleep",
+            "to": "req",
+            "label": "retry",
+            "change": "added"
+          },
+          {
+            "from": "store",
+            "to": "ret"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ttl-cache",
+      "title": "Give cache entries a time-to-live",
+      "group": "Core logic",
+      "kind": "feature",
+      "risk": "medium",
+      "riskNote": "Entries are only evicted when read, so unread keys stay in memory forever.",
+      "summary": "cache.set stores { value, expires } with a default 60 s TTL; cache.get deletes and misses on expired entries. fetchJson reads the cache first unless opts.noCache is set.",
+      "why": "Repeated lookups of the same URL within a request burst were hitting the network every time.",
+      "refs": [
+        {
+          "file": "src/cache.js"
+        }
+      ],
+      "decisions": [
+        {
+          "question": "When are expired entries removed?",
+          "chosen": {
+            "label": "Lazily, on read",
+            "description": "get() checks expiry and deletes stale entries.",
+            "pros": [
+              "No timers or background work",
+              "Tiny implementation"
+            ],
+            "cons": [
+              "Keys that are never read again leak memory",
+              "No size bound"
+            ]
+          },
+          "alternatives": [
+            {
+              "label": "Bounded LRU with TTL",
+              "description": "Cap the number of entries and evict least-recently-used ones, keeping TTL checks.",
+              "pros": [
+                "Memory is bounded",
+                "Hot keys stay cached"
+              ],
+              "cons": [
+                "More code or a dependency (lru-cache)"
+              ],
+              "effort": "medium"
+            },
+            {
+              "label": "Periodic sweep",
+              "description": "A setInterval (unref'd) removes expired entries every minute.",
+              "pros": [
+                "Keeps the simple Map",
+                "Bounds memory by TTL"
+              ],
+              "cons": [
+                "Timer must be unref'd and cleaned up in tests",
+                "Still unbounded within one TTL window"
+              ],
+              "effort": "small"
+            }
+          ]
+        }
+      ],
+      "flow": {
+        "nodes": [
+          {
+            "id": "s",
+            "label": "get(key)",
+            "shape": "start",
+            "ref": {
+              "file": "src/cache.js",
+              "lines": [
+                3,
+                3
+              ]
+            }
+          },
+          {
+            "id": "read",
+            "label": "store.get(key)",
+            "shape": "io",
+            "change": "modified",
+            "ref": {
+              "file": "src/cache.js",
+              "lines": [
+                4,
+                4
+              ]
+            }
+          },
+          {
+            "id": "exists",
+            "label": "Entry exists?",
+            "shape": "decision",
+            "change": "added",
+            "ref": {
+              "file": "src/cache.js",
+              "lines": [
+                5,
+                5
+              ]
+            }
+          },
+          {
+            "id": "miss",
+            "label": "Return undefined",
+            "shape": "end",
+            "change": "added",
+            "ref": {
+              "file": "src/cache.js",
+              "lines": [
+                5,
+                5
+              ]
+            }
+          },
+          {
+            "id": "expired",
+            "label": "Past expires?",
+            "shape": "decision",
+            "change": "added",
+            "decision": 0,
+            "ref": {
+              "file": "src/cache.js",
+              "lines": [
+                6,
+                6
+              ]
+            }
+          },
+          {
+            "id": "del",
+            "label": "Delete entry",
+            "shape": "step",
+            "change": "added",
+            "decision": 0,
+            "ref": {
+              "file": "src/cache.js",
+              "lines": [
+                7,
+                8
+              ]
+            }
+          },
+          {
+            "id": "miss2",
+            "label": "Return undefined",
+            "shape": "end",
+            "change": "added",
+            "ref": {
+              "file": "src/cache.js",
+              "lines": [
+                8,
+                8
+              ]
+            }
+          },
+          {
+            "id": "hit",
+            "label": "Return entry.value",
+            "shape": "end",
+            "change": "modified",
+            "ref": {
+              "file": "src/cache.js",
+              "lines": [
+                10,
+                10
+              ]
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "s",
+            "to": "read"
+          },
+          {
+            "from": "read",
+            "to": "exists"
+          },
+          {
+            "from": "exists",
+            "to": "miss",
+            "label": "no",
+            "change": "added"
+          },
+          {
+            "from": "exists",
+            "to": "expired",
+            "label": "yes",
+            "change": "added"
+          },
+          {
+            "from": "expired",
+            "to": "del",
+            "label": "yes",
+            "change": "added"
+          },
+          {
+            "from": "del",
+            "to": "miss2",
+            "change": "added"
+          },
+          {
+            "from": "expired",
+            "to": "hit",
+            "label": "no",
+            "change": "added"
+          }
+        ]
+      }
+    },
+    {
+      "id": "config-knobs",
+      "title": "Move timeout, retries, backoff and TTL into config.json",
+      "group": "Configuration",
+      "kind": "config",
+      "risk": "low",
+      "summary": "Adds retries: 3, backoffMs: 200 and cacheTtlMs: 30000 next to the existing timeout; client.js reads them instead of a hard-coded constant.",
+      "refs": [
+        {
+          "file": "config.json"
+        }
+      ],
+      "decisions": []
+    },
+    {
+      "id": "cache-test",
+      "title": "Test cache expiry",
+      "group": "Tests & docs",
+      "kind": "test",
+      "risk": "low",
+      "summary": "Asserts a value is readable immediately and gone after its 10 ms TTL. The retry loop itself has no tests.",
+      "refs": [
+        {
+          "file": "test/client.test.js"
+        }
+      ]
+    },
+    {
+      "id": "readme-retries",
+      "title": "Document retry behaviour",
+      "group": "Tests & docs",
+      "kind": "docs",
+      "risk": "low",
+      "summary": "README notes that requests are retried with exponential backoff.",
+      "refs": [
+        {
+          "file": "README.md"
+        }
+      ]
+    }
+  ],
+  "flow": {
+    "direction": "LR",
+    "nodes": [
+      {
+        "id": "caller",
+        "label": "Caller",
+        "sub": "any module using the client",
+        "type": "actor"
+      },
+      {
+        "id": "fetch",
+        "label": "fetchJson()",
+        "sub": "src/client.js",
+        "type": "component",
+        "change": "modified",
+        "card": "retry-loop"
+      },
+      {
+        "id": "retry",
+        "label": "Retry loop",
+        "sub": "exponential backoff",
+        "type": "component",
+        "change": "added",
+        "card": "retry-loop"
+      },
+      {
+        "id": "const",
+        "label": "DEFAULT_TIMEOUT",
+        "sub": "hard-coded 5000 ms",
+        "type": "data",
+        "change": "removed"
+      },
+      {
+        "id": "config",
+        "label": "config.json",
+        "sub": "timeout \u00b7 retries \u00b7 backoff \u00b7 TTL",
+        "type": "data",
+        "change": "modified",
+        "card": "config-knobs"
+      },
+      {
+        "id": "cache",
+        "label": "TTL cache",
+        "sub": "src/cache.js",
+        "type": "data",
+        "change": "modified",
+        "card": "ttl-cache"
+      },
+      {
+        "id": "api",
+        "label": "Upstream API",
+        "sub": "HTTP",
+        "type": "service"
+      },
+      {
+        "id": "test",
+        "label": "client.test.js",
+        "sub": "expiry test",
+        "type": "component",
+        "change": "added",
+        "card": "cache-test"
+      }
+    ],
+    "edges": [
+      {
+        "from": "caller",
+        "to": "fetch",
+        "label": "fetchJson(url)"
+      },
+      {
+        "from": "fetch",
+        "to": "cache",
+        "label": "get / set",
+        "change": "added"
+      },
+      {
+        "from": "fetch",
+        "to": "retry",
+        "label": "on miss",
+        "change": "added"
+      },
+      {
+        "from": "retry",
+        "to": "api",
+        "label": "HTTP GET",
+        "change": "added"
+      },
+      {
+        "from": "fetch",
+        "to": "api",
+        "label": "single GET",
+        "change": "removed"
+      },
+      {
+        "from": "config",
+        "to": "retry",
+        "label": "retries, backoff",
+        "change": "added"
+      },
+      {
+        "from": "const",
+        "to": "fetch",
+        "label": "timeout",
+        "change": "removed"
+      },
+      {
+        "from": "config",
+        "to": "cache",
+        "label": "cacheTtlMs",
+        "change": "added"
+      },
+      {
+        "from": "test",
+        "to": "cache",
+        "label": "asserts expiry",
+        "change": "added"
+      }
+    ]
+  }
+}

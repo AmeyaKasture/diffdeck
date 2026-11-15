@@ -1,0 +1,17 @@
+{
+  "branch": "feat/retries",
+  "message": "Add retries and TTL cache",
+  "base": {
+    "README.md": "# Demo client\n",
+    "config.json": "{ \"timeout\": 5000 }\n",
+    "src/cache.js": "const store = new Map();\n\nfunction get(key) {\n  return store.get(key);\n}\n\nfunction set(key, value) {\n  store.set(key, value);\n}\n\nmodule.exports = { get, set };\n",
+    "src/client.js": "const DEFAULT_TIMEOUT = 5000;\n\nasync function fetchJson(url, opts = {}) {\n  const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(DEFAULT_TIMEOUT) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n}\n\nmodule.exports = { fetchJson };\n"
+  },
+  "head": {
+    "README.md": "# Demo client\n\nRequests are retried up to `retries` times with exponential backoff.\n",
+    "config.json": "{ \"timeout\": 5000, \"retries\": 3, \"backoffMs\": 200, \"cacheTtlMs\": 30000 }\n",
+    "src/cache.js": "const store = new Map();\n\nfunction get(key) {\n  const entry = store.get(key);\n  if (!entry) return undefined;\n  if (Date.now() > entry.expires) {\n    store.delete(key);\n    return undefined;\n  }\n  return entry.value;\n}\n\nfunction set(key, value, ttlMs = 60000) {\n  store.set(key, { value, expires: Date.now() + ttlMs });\n}\n\nmodule.exports = { get, set };\n",
+    "src/client.js": "const config = require('../config.json');\nconst cache = require('./cache');\n\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\n\nasync function fetchJson(url, opts = {}) {\n  const cached = cache.get(url);\n  if (cached && !opts.noCache) return cached;\n\n  let lastError;\n  for (let attempt = 0; attempt <= config.retries; attempt++) {\n    try {\n      const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(config.timeout) });\n      if (res.status >= 500) throw new Error(`HTTP ${res.status}`);\n      if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { fatal: true });\n      const body = await res.json();\n      cache.set(url, body, config.cacheTtlMs);\n      return body;\n    } catch (err) {\n      if (err.fatal) throw err;\n      lastError = err;\n      await sleep(config.backoffMs * 2 ** attempt);\n    }\n  }\n  throw lastError;\n}\n\nmodule.exports = { fetchJson };\n",
+    "test/client.test.js": "const assert = require('assert');\nconst cache = require('../src/cache');\n\ncache.set('a', 1, 10);\nassert.strictEqual(cache.get('a'), 1);\nsetTimeout(() => assert.strictEqual(cache.get('a'), undefined), 20);\n"
+  }
+}

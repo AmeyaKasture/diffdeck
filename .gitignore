@@ -1,0 +1,4 @@
+node_modules/
+.diffdeck/
+.DS_Store
+*.log

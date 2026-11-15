@@ -18,8 +18,13 @@
       <div class="topbar-spacer"></div>
       <span class="save-state" id="save-state" aria-live="polite"></span>
       <div class="progress" id="progress" title="Cards reviewed"></div>
-      <button class="btn btn-primary" id="handoff-btn" type="button">
-        Finish review <span class="count-badge" id="handoff-count" hidden></span>
+      <button class="btn" id="handoff-btn" type="button" data-act="finish" data-v="agent" title="Your coding agent implements the feedback">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="2.5" y="4" width="11" height="8.5" rx="2.5"/><path d="M8 1.5V4M5.5 8h.01M10.5 8h.01"/></svg>
+        <span class="lbl">Hand off to agent</span> <span class="count-badge" id="handoff-count" hidden></span>
+      </button>
+      <button class="btn btn-primary" id="github-btn" type="button" data-act="finish" data-v="github" title="Publish your notes as a pull request review">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 .5a7.5 7.5 0 0 0-2.37 14.62c.38.07.52-.16.52-.36v-1.3c-2.1.46-2.54-.9-2.54-.9-.34-.87-.84-1.1-.84-1.1-.68-.47.05-.46.05-.46.76.05 1.16.78 1.16.78.67 1.15 1.77.82 2.2.62.07-.48.26-.82.48-1-1.68-.19-3.44-.84-3.44-3.73 0-.82.3-1.5.78-2.03-.08-.19-.34-.96.07-2 0 0 .64-.2 2.08.78a7.2 7.2 0 0 1 3.78 0c1.44-.98 2.08-.78 2.08-.78.41 1.04.15 1.81.07 2 .49.53.78 1.2.78 2.03 0 2.9-1.77 3.54-3.45 3.73.27.23.51.69.51 1.39v2.06c0 .2.14.44.52.36A7.5 7.5 0 0 0 8 .5Z"/></svg>
+        <span class="lbl">Post on GitHub</span>
       </button>
     </div>
   </header>

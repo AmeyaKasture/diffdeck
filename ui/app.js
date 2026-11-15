@@ -1042,7 +1042,7 @@ function renderDrawer() {
   const body = $('.drawer-body', drawer);
   const top = body ? body.scrollTop : 0;
   drawer.innerHTML = `
-    <div class="drawer-head"><h3>Finish review</h3><button class="btn btn-icon btn-ghost" data-act="close-drawer" aria-label="Close">${ICON.close}</button></div>
+    <div class="drawer-head"><h3>${GH.tab === 'github' ? 'Post on GitHub' : 'Hand off to agent'}</h3><button class="btn btn-icon btn-ghost" data-act="close-drawer" aria-label="Close">${ICON.close}</button></div>
     <div class="drawer-body">
       <div class="summary-tiles">
         <div class="stat"><div class="v" id="tile-actionable">${S.actionable}</div><div class="l">requested changes</div></div>
@@ -1109,7 +1109,8 @@ async function ghPost() {
   await ghCheck();
 }
 
-function openDrawer() {
+function openDrawer(tab) {
+  if (tab) GH.tab = tab;
   $('#drawer').hidden = false;
   renderDrawer();
   saveNow();
@@ -1204,6 +1205,7 @@ document.addEventListener('click', (e) => {
   const act = t.dataset.act;
   switch (act) {
     case 'open': openCard(t.dataset.id); break;
+    case 'finish': openDrawer(t.dataset.v); break;
     case 'gnode': {
       const name = t.closest('svg').dataset.svg;
       if (S.vps[name] && S.vps[name].moved) break;
@@ -1332,7 +1334,6 @@ document.addEventListener('keydown', (e) => {
   if (!S.openId && e.key === '/') { e.preventDefault(); const s = $('#search'); if (s) s.focus(); }
 });
 
-$('#handoff-btn').addEventListener('click', openDrawer);
 
 /* ---------------- boot + live reload ---------------- */
 

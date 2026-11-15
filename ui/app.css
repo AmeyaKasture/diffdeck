@@ -586,6 +586,7 @@ tr.line.focus td { background-image: linear-gradient(rgba(52, 81, 209, .09), rgb
   .sheet-main, .diff-scroll { overflow: visible; }
   .search { width: 100%; margin-left: 0; }
   .progress-track, .save-state, .source-chip { display: none; }
+  #handoff-btn .lbl, #github-btn .lbl { display: none; }
   .topbar-inner, .page { padding-left: 16px; padding-right: 16px; }
   .grid { grid-template-columns: minmax(0, 1fr); }
   .canvas { height: 70vh; }
@@ -596,3 +597,4 @@ tr.line.focus td { background-image: linear-gradient(rgba(52, 81, 209, .09), rgb
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+#handoff-btn .count-badge { background: var(--accent); color: #fff; }

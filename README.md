@@ -20,66 +20,92 @@ Runs entirely on your machine · zero dependencies · Node 18+
 
 ---
 
-## Try it in 10 seconds
+## How to use it
 
-```sh
-npx github:AmeyaKasture/diffdeck demo
-```
+A review takes four commands. Steps 2 and 4 run in your coding agent; the rest run in a terminal.
 
-This builds a small sample repository with a ready-made breakdown and opens it in
-your browser. You need no agent and no setup.
-
-## Install
+### 1. Install (once per machine)
 
 ```sh
 npm install -g github:AmeyaKasture/diffdeck
+diffdeck --version     # prints 0.1.0
 ```
 
-<details>
-<summary>Other ways to install</summary>
+Requires Node 18+ and git. To review GitHub pull requests, you also need the
+[GitHub CLI](https://cli.github.com) (`brew install gh`, `winget install --id GitHub.cli`).
+If you are not logged in to it, `diffdeck login` takes care of that.
 
-```sh
-# From a clone, so your installed version follows git pull
-git clone https://github.com/AmeyaKasture/diffdeck.git
-cd diffdeck && npm link
+Want a look first? `npx github:AmeyaKasture/diffdeck demo` opens a finished sample review,
+with nothing to install and no agent needed.
 
-# Without installing: run any command through npx
-npx github:AmeyaKasture/diffdeck <command>
-```
-</details>
-
-## Quick start
+### 2. Set up a repository (once per repository)
 
 ```sh
 cd your-repo
-diffdeck init        # once per repo: adds /diffdeck-breakdown and /diffdeck-apply to your agents
+diffdeck init
 ```
 
-Then a review takes three steps:
+This adds two slash commands for Claude Code, Cursor and OpenCode:
 
-| | Where | What to type | What happens |
-|---|---|---|---|
-| **1** | your agent | `/diffdeck-breakdown <PR link>` | The agent reads the pull request and draws the diagrams, flowcharts and design alternatives |
-| **2** | terminal | `diffdeck` | The review of that PR opens in your browser. Explore it, comment, approve, and pick alternatives |
-| **3** | your agent | `/diffdeck-apply` | The agent implements your feedback |
-| *or 3* | browser | **Finish review**, then **Post on GitHub** | Your notes become a PR review with inline comments |
+| Command | What it does |
+|---|---|
+| `/diffdeck-breakdown <PR link>` | The agent analyses the pull request and opens the review |
+| `/diffdeck-apply` | The agent implements the feedback you leave in the review |
 
-For example:
+The command files go to `.claude/commands/`, `.cursor/commands/` and `.opencode/command/`.
+Commit them if your team should have the commands too. For other agents (Codex, Aider, …),
+`diffdeck init` prints a short snippet to paste into `AGENTS.md`.
+
+### 3. Break down a pull request (in your agent)
 
 ```
 /diffdeck-breakdown https://github.com/your-org/your-repo/pull/42
 ```
 
-If you run `/diffdeck-breakdown` without a link, the agent asks you for one before doing
-anything. If you have no pull request yet, tell it which base branch to compare against
-instead.
+The agent then:
 
-Once a PR has been prepared, plain `diffdeck` keeps reviewing that PR. Run
-`diffdeck review <other PR link>` to switch.
+1. fetches the PR's diff (`diffdeck prepare --pr <link>`)
+2. reads the diff and the surrounding code, and writes the breakdown: a system diagram,
+   change cards, logic flowcharts, and the design decisions with their alternatives
+3. checks its own work with `diffdeck validate`
+4. starts the review server in the background and opens your browser (`diffdeck serve --background`)
 
-> **Agent without slash commands?** For step 1, tell it *"Run `diffdeck prepare --pr <PR link>`,
-> then follow `.diffdeck/AGENT_TASK.md`"*. For step 3, tell it *"Implement `.diffdeck/feedback.md`"*.
-> All communication happens through plain files, so every agent can take part.
+It finishes with the link and its main findings:
+
+```
+The review is open at http://127.0.0.1:4777/ (running in the background; stop it with diffdeck stop).
+```
+
+If you leave out the link, the agent asks for it before doing anything. If the PR belongs to
+another repository, the agent runs from your local clone of that repository.
+
+### 4. Review in the browser, then choose one of two buttons
+
+Explore the diagram, open changes, read the flowcharts and code, leave notes on lines,
+prefer alternatives, and approve or request changes per card. Everything saves as you go.
+When you are done, use one of the two buttons at the top right:
+
+| Button | What happens |
+|---|---|
+| **Hand off to agent** | Your feedback is in `.diffdeck/feedback.md`. Run `/diffdeck-apply` in your agent, and it implements the requested changes while leaving approved cards untouched |
+| **Post on GitHub** | Your notes are published on the PR as a review: line notes become inline comments, and decisions and card notes form the summary. You preview it, choose *Comment*, *Request changes* or *Approve*, and confirm before anything is posted |
+
+### Everyday commands
+
+| Command | When to use it |
+|---|---|
+| `diffdeck` | Reopen the review. It reuses the running server, or starts one, and keeps reviewing the PR that was prepared |
+| `diffdeck review <PR link>` | Review a different PR yourself, without an agent. The diagram shows changed files until a breakdown exists |
+| `diffdeck review main` | Review your current branch against `main` instead of a PR |
+| `diffdeck stop` | Stop the background server |
+| `diffdeck post` / `diffdeck post --yes` | Preview, then publish, the GitHub review from the terminal |
+| `diffdeck login` | Log in to GitHub through `gh` |
+
+The [command reference](#command-reference) lists every command and option.
+
+> **Agent without slash commands?** For step 3, tell it: *"Run `diffdeck prepare --pr <PR link>`,
+> then follow `.diffdeck/AGENT_TASK.md`."* After the review, tell it: *"Implement `.diffdeck/feedback.md`."*
+> Everything passes through plain files, so any agent can take part.
 
 ## What you get
 
@@ -115,11 +141,12 @@ Click any line number to leave a note on that line.
 
 <img src="docs/code.png" alt="Code diff with the lines for the selected step highlighted" width="100%">
 
-### 4. Finish: hand off to an agent, or post on GitHub
+### 4. Two ways to finish: hand off to an agent, or post on GitHub
 
-**Finish review** offers two ways to act on what you decided.
+The top bar has two buttons, **Hand off to agent** and **Post on GitHub**. Each opens its
+own panel, and you can switch between them there.
 
-<img src="docs/handoff.png" alt="Finish review drawer with two options: hand off to agent, or post on GitHub" width="100%">
+<img src="docs/handoff.png" alt="Hand off to agent panel, with the Post on GitHub option beside it" width="100%">
 
 **Hand off to agent.** Everything you do is saved continuously to `.diffdeck/feedback.md`:
 approvals, requested changes, preferred alternatives (with their trade-offs written out),
@@ -169,7 +196,7 @@ Files: `src/client.js`
 ```
 </details>
 
-## Commands
+## Command reference
 
 | Command | What it does |
 |---|---|
@@ -182,7 +209,9 @@ Files: `src/client.js`
 | `diffdeck demo` | Opens the sample review |
 | `diffdeck init [claude\|cursor\|opencode\|all]` | Adds the `/diffdeck-breakdown` and `/diffdeck-apply` commands to the repo |
 | `diffdeck prepare [same options]` | Only collects the diff; this is what agents run |
-| `diffdeck serve` | Only opens the UI for the prepared diff |
+| `diffdeck serve` | Only opens the UI for the prepared diff, in the foreground (Ctrl+C stops it) |
+| `diffdeck serve --background` | Starts the UI server in the background and returns; reuses a server that is already running |
+| `diffdeck stop` | Stops the background server for this repository |
 | `diffdeck post` | Previews your review for the pull request; nothing is sent |
 | `diffdeck post --yes [--event comment\|request-changes\|approve]` | Posts the review on GitHub (`--force` re-posts an identical review) |
 | `diffdeck login` | Logs in to GitHub through `gh` (browser device flow) |

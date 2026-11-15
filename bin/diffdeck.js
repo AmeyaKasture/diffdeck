@@ -28,7 +28,8 @@ ${c.b('Usage')}
   diffdeck init [agent]         Add /diffdeck-breakdown and /diffdeck-apply commands to this repo
                                 agent: ${AGENT_TARGETS.join(' | ')} | all (default)
   diffdeck prepare [same args]  Only collect the diff (what agents run)
-  diffdeck serve                Only open the UI for the prepared diff
+  diffdeck serve [--background] Open the UI for the prepared diff (--background: keep it running and return)
+  diffdeck stop                 Stop a background server
   diffdeck post [--event comment|request-changes|approve] [--yes]
                                 Preview your review for the PR; with --yes, post it to GitHub
   diffdeck login                Log in to GitHub (via the gh CLI)
@@ -97,8 +98,55 @@ function doPrepare(root, args) {
   return r;
 }
 
+// A server started by `diffdeck serve` records itself in .diffdeck/server.json
+// so later commands (and agents) reuse it instead of starting another one.
+function serverFile(dir) { return path.join(dir, 'server.json'); }
+
+async function runningServer(dir) {
+  let info;
+  try { info = JSON.parse(fs.readFileSync(serverFile(dir), 'utf8')); } catch { return null; }
+  try { process.kill(info.pid, 0); } catch { return null; }
+  try {
+    const res = await fetch(`${info.url}api/version`, { signal: AbortSignal.timeout(1500) });
+    return res.ok ? info : null;
+  } catch { return null; }
+}
+
+function printRunning(dir, url, background) {
+  const hasBreakdown = fs.existsSync(path.join(dir, 'breakdown.json'));
+  console.log(`${c.green('✓')} The review is open at ${c.b(c.blue(url))}`);
+  if (!hasBreakdown) console.log(`  ${c.yellow('No breakdown yet.')} In your agent run ${c.b('/diffdeck-breakdown <PR link>')}; the page updates by itself.`);
+  console.log(`  Feedback is saved to ${c.dim(path.join(dir, 'feedback.md'))}`);
+  console.log(c.dim(background ? '  The server runs in the background. Stop it with: diffdeck stop' : '  Press Ctrl+C to stop.'));
+}
+
 async function doServe(dir, args) {
   load(dir); // fail early with a helpful message if nothing is prepared
+  const existing = await runningServer(dir);
+  if (existing) {
+    console.log(c.dim('  (already running; the open page refreshes by itself)'));
+    printRunning(dir, existing.url, true);
+    if (!args['no-open']) openBrowser(existing.url);
+    return;
+  }
+
+  if (args.background) {
+    const child = spawn(process.execPath, [__filename, 'serve', '--no-open', ...(args.port ? ['--port', String(args.port)] : [])], {
+      cwd: path.dirname(dir), detached: true, stdio: 'ignore', windowsHide: true,
+    });
+    child.unref();
+    for (let i = 0; i < 50; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const info = await runningServer(dir);
+      if (info && info.pid === child.pid) {
+        printRunning(dir, info.url, true);
+        if (!args['no-open']) openBrowser(info.url);
+        return;
+      }
+    }
+    throw new Error('The background server did not start. Run `diffdeck serve` to see the error.');
+  }
+
   let port = Number(args.port || process.env.DIFFDECK_PORT || 4777);
   let server;
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -108,19 +156,27 @@ async function doServe(dir, args) {
     }
   }
   const url = `http://127.0.0.1:${port}/`;
-  const hasBreakdown = fs.existsSync(path.join(dir, 'breakdown.json'));
-  console.log(`${c.green('✓')} diffdeck is running at ${c.b(c.blue(url))}`);
-  if (!hasBreakdown) console.log(`  ${c.yellow('No breakdown yet.')} In your agent run ${c.b('/diffdeck-breakdown')} (or say "follow .diffdeck/AGENT_TASK.md"); the page updates by itself.`);
-  console.log(`  Feedback is saved to ${c.dim(path.join(dir, 'feedback.md'))}`);
-  console.log(c.dim('  Press Ctrl+C to stop.'));
+  fs.writeFileSync(serverFile(dir), JSON.stringify({ pid: process.pid, port, url, startedAt: new Date().toISOString() }, null, 2));
+  const cleanup = () => {
+    try { if (JSON.parse(fs.readFileSync(serverFile(dir), 'utf8')).pid === process.pid) fs.unlinkSync(serverFile(dir)); } catch { /* already gone */ }
+  };
+  printRunning(dir, url, false);
   if (!args['no-open']) openBrowser(url);
-  process.on('SIGINT', () => { server.close(); process.exit(0); });
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { cleanup(); server.close(); process.exit(0); });
+  process.on('exit', cleanup);
+}
+
+async function doStop(dir) {
+  const info = await runningServer(dir);
+  if (!info) { try { fs.unlinkSync(serverFile(dir)); } catch { /* none */ } console.log('No diffdeck server is running for this repository.'); return; }
+  process.kill(info.pid, 'SIGTERM');
+  console.log(`${c.green('✓')} Stopped the diffdeck server at ${info.url}`);
 }
 
 async function main() {
   const argv = process.argv.slice(2);
   const first = argv[0];
-  const known = ['review', 'demo', 'init', 'agent-setup', 'prepare', 'serve', 'validate', 'feedback', 'post', 'login', 'help'];
+  const known = ['review', 'demo', 'init', 'agent-setup', 'prepare', 'serve', 'stop', 'validate', 'feedback', 'post', 'login', 'help'];
   const cmd = !first || first.startsWith('-') ? 'review' : first;
   const args = parseArgs(cmd === first ? argv.slice(1) : argv);
 
@@ -151,6 +207,9 @@ async function main() {
       return;
     case 'serve':
       await doServe(dir, args);
+      return;
+    case 'stop':
+      await doStop(dir);
       return;
     case 'validate': {
       const r = load(dir);

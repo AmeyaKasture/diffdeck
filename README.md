@@ -6,8 +6,9 @@
 
 diffdeck turns a git diff or GitHub PR into an interactive flow diagram.
 Click any part to see its logic as a flowchart, jump to the exact lines of code,
-compare the design alternatives with their pros and cons, and leave feedback
-that **any coding agent** (Claude Code, Cursor, OpenCode, Codex, Aider, …) can implement.
+compare the design alternatives with their pros and cons, then either hand your
+feedback to **any coding agent** (Claude Code, Cursor, OpenCode, Codex, Aider, …)
+or **post it as a review on the GitHub pull request**.
 
 Runs entirely on your machine · zero dependencies · Node 18+
 
@@ -61,6 +62,7 @@ Then a review takes three steps:
 | **1** | your agent | `/diffdeck-breakdown` | The agent reads the diff and draws the diagrams, flowcharts and design alternatives |
 | **2** | terminal | `diffdeck` | The review opens in your browser. Explore it, comment, approve, and pick alternatives |
 | **3** | your agent | `/diffdeck-apply` | The agent implements your feedback |
+| *or 3* | browser | **Finish review → Post on GitHub** | Your notes become a PR review with inline comments |
 
 The order of steps 1 and 2 doesn't matter. If you run `diffdeck` first, the page
 shows the changed files right away and redraws itself when the agent finishes.
@@ -103,14 +105,35 @@ Click any line number to leave a note on that line.
 
 <img src="docs/code.png" alt="Code diff with the lines for the selected step highlighted" width="100%">
 
-### 4. Feedback your agent can act on
+### 4. Finish: hand off to an agent, or post on GitHub
 
-Everything you do is saved continuously to `.diffdeck/feedback.md`: approvals, requested
-changes, preferred alternatives (with their trade-offs written out), line notes with
-`file:line` references, and an overall comment. **Hand off to agent** shows the exact
-prompt for each tool.
+**Finish review** offers two ways to act on what you decided.
 
-<img src="docs/handoff.png" alt="Hand-off drawer with prompts for Claude Code, Cursor, OpenCode and any agent" width="100%">
+<img src="docs/handoff.png" alt="Finish review drawer with two options: hand off to agent, or post on GitHub" width="100%">
+
+**Hand off to agent.** Everything you do is saved continuously to `.diffdeck/feedback.md`:
+approvals, requested changes, preferred alternatives (with their trade-offs written out),
+line notes with `file:line` references, and an overall comment. Copy the prompt for your
+tool, and the agent implements the requested changes while leaving approved cards untouched.
+
+**Post on GitHub.** Your review is published on the pull request through the
+[GitHub CLI](https://cli.github.com): line notes become inline comments, while design
+decisions and card notes form the summary. You choose *Comment*, *Request changes* or
+*Approve*. diffdeck guides you through each step and guards against mistakes:
+
+| Situation | What diffdeck does |
+|---|---|
+| `gh` is not installed | Shows the install command for your OS, then **Check again** |
+| Not logged in | **Log in with GitHub** starts GitHub's device login: diffdeck shows the one-time code, and **Copy code & open GitHub** finishes it in your browser. The page continues automatically, and diffdeck never sees your password or token |
+| No remote or no PR for the branch | Explains why and gives the command to fix it (`gh pr create --fill`, or `diffdeck review --pr <n>`) |
+| The PR changed after you reviewed, or the review includes uncommitted or unpushed lines | Warns you, re-checks every line note against the PR's **current** diff, and moves notes that no longer match into the summary rather than misplacing them |
+| It is your own PR | Offers only *Comment*, because GitHub forbids approving or requesting changes on your own PR |
+| The PR is closed or merged, or there is nothing to post | Disables posting and explains why |
+| The same review was already posted | Shows a link to it and posts again only if you tick *Post it again anyway* |
+| Every post | Requires you to confirm *"I understand this posts publicly on PR #N as @you"* |
+
+The same flow works in the terminal: `diffdeck login`, then `diffdeck post` (preview),
+then `diffdeck post --yes`.
 
 <details>
 <summary>Example <code>feedback.md</code></summary>
@@ -149,6 +172,9 @@ Files: `src/client.js`
 | `diffdeck init [claude\|cursor\|opencode\|all]` | Adds the `/diffdeck-breakdown` and `/diffdeck-apply` commands to the repo |
 | `diffdeck prepare [same options]` | Only collects the diff; this is what agents run |
 | `diffdeck serve` | Only opens the UI for the prepared diff |
+| `diffdeck post` | Previews your review for the pull request; nothing is sent |
+| `diffdeck post --yes [--event comment\|request-changes\|approve]` | Posts the review on GitHub (`--force` re-posts an identical review) |
+| `diffdeck login` | Logs in to GitHub through `gh` (browser device flow) |
 | `diffdeck validate` | Checks the agent's `breakdown.json` and reports precise errors |
 | `diffdeck feedback` | Prints `feedback.md` |
 
@@ -245,9 +271,15 @@ Flowchart `shape`: `start` · `end` · `step` · `decision` · `io`.
 ## FAQ
 
 **Does my code leave my machine?**
-No. diffdeck makes no network requests. The server listens only on `127.0.0.1`
-and rejects requests from other origins. The only exception is `--pr`, which asks
-`gh` for the PR's diff.
+No. diffdeck makes no network requests of its own. The server listens only on
+`127.0.0.1` and rejects requests from other origins. GitHub is contacted only through
+`gh`, and only when you ask: to fetch a PR (`--pr`), to check which PR you are
+reviewing, or to post a review you have confirmed.
+
+**What does a posted review look like?**
+Line notes appear as inline comments on the exact lines. The summary lists each
+card that needs changes, any design alternatives you preferred (with the reason), and
+the cards that look good. diffdeck adds no signature or branding.
 
 **Can I use it without an AI agent?**
 Yes. Without a breakdown, the diagram shows the changed files grouped by directory.

@@ -28,6 +28,9 @@ ${c.b('Usage')}
                                 agent: ${AGENT_TARGETS.join(' | ')} | all (default)
   diffdeck prepare [same args]  Only collect the diff (what agents run)
   diffdeck serve                Only open the UI for the prepared diff
+  diffdeck post [--event comment|request-changes|approve] [--yes]
+                                Preview your review for the PR; with --yes, post it to GitHub
+  diffdeck login                Log in to GitHub (via the gh CLI)
   diffdeck validate             Check .diffdeck/breakdown.json
   diffdeck feedback             Print .diffdeck/feedback.md
 
@@ -40,13 +43,14 @@ ${c.b('Workflow')}
   1. In your agent:  /diffdeck-breakdown      ${c.dim('(or: "follow .diffdeck/AGENT_TASK.md")')}
   2. In a terminal:  diffdeck                 ${c.dim('(explore the diagram, comment, pick alternatives)')}
   3. In your agent:  /diffdeck-apply          ${c.dim('(or: "implement .diffdeck/feedback.md")')}
+     or on GitHub:   Finish review → Post on GitHub  ${c.dim('(or: diffdeck post)')}
 `;
 
 function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--pr' || a === '--port') args[a.slice(2)] = argv[++i];
+    if (a === '--pr' || a === '--port' || a === '--event') args[a.slice(2)] = argv[++i];
     else if (a.startsWith('--')) args[a.slice(2)] = true;
     else args._.push(a);
   }
@@ -101,12 +105,13 @@ async function doServe(dir, args) {
 async function main() {
   const argv = process.argv.slice(2);
   const first = argv[0];
-  const known = ['review', 'demo', 'init', 'agent-setup', 'prepare', 'serve', 'validate', 'feedback', 'help'];
+  const known = ['review', 'demo', 'init', 'agent-setup', 'prepare', 'serve', 'validate', 'feedback', 'post', 'login', 'help'];
   const cmd = !first || first.startsWith('-') ? 'review' : first;
   const args = parseArgs(cmd === first ? argv.slice(1) : argv);
 
   if (args.help || args.h || cmd === 'help') { process.stdout.write(HELP); return; }
   if (args.version || argv.includes('-v')) { console.log(version); return; }
+  if (args.y) args.yes = true;
   if (!known.includes(cmd)) { process.stderr.write(`Unknown command "${cmd}".\n\n${HELP}`); process.exitCode = 2; return; }
 
   if (cmd === 'demo') {
@@ -147,6 +152,40 @@ async function main() {
       const f = path.join(dir, 'feedback.md');
       if (!fs.existsSync(f)) { console.log('No feedback yet. Run `diffdeck` and review.'); process.exitCode = 1; return; }
       process.stdout.write(fs.readFileSync(f, 'utf8'));
+      return;
+    }
+    case 'login': {
+      const github = require('../lib/github');
+      const st = await github.authStatus(root);
+      if (!st.installed) { console.log(`The GitHub CLI is required. Install it (${c.b('brew install gh')} / ${c.b('winget install --id GitHub.cli')} / https://github.com/cli/cli#installation), then run ${c.b('diffdeck login')} again.`); process.exitCode = 1; return; }
+      if (st.loggedIn) { console.log(`${c.green('✓')} Already logged in to GitHub as ${c.b('@' + st.user)}.`); return; }
+      await new Promise((resolve) => spawn('gh', ['auth', 'login', '--web', '--hostname', 'github.com', '--git-protocol', 'https'], { stdio: 'inherit' }).on('exit', resolve).on('error', resolve));
+      return;
+    }
+    case 'post': {
+      const github = require('../lib/github');
+      const { deckCards } = require('../lib/breakdown');
+      const { sanitize } = require('../lib/feedback');
+      const loaded = load(dir);
+      let fb;
+      try { fb = sanitize(JSON.parse(fs.readFileSync(path.join(dir, 'feedback.json'), 'utf8'))); } catch { console.log('No feedback yet. Run `diffdeck` and review first.'); process.exitCode = 1; return; }
+      const cards = deckCards(loaded);
+      const pv = await github.preview(root, loaded.meta, cards, fb);
+      const st = pv.status;
+      if (!st.auth.installed) { console.log(`The GitHub CLI is required: ${c.b('brew install gh')} (or see https://github.com/cli/cli#installation).`); process.exitCode = 1; return; }
+      if (!st.auth.loggedIn) { console.log(`Not logged in to GitHub. Run ${c.b('diffdeck login')} first.`); process.exitCode = 1; return; }
+      if (!st.pr) { console.log(st.prError.message + (st.prError.error === 'no-pr' ? `\nPush and open one with ${c.b('gh pr create --fill')}, or use ${c.b('diffdeck review --pr <n>')}.` : '')); process.exitCode = 1; return; }
+      if (pv.error) { console.log(pv.error); process.exitCode = 1; return; }
+      const map = { comment: 'COMMENT', 'request-changes': 'REQUEST_CHANGES', approve: 'APPROVE' };
+      const event = args.event ? map[args.event] : pv.review.suggestedEvent;
+      if (!event) { console.log('--event must be comment, request-changes or approve.'); process.exitCode = 2; return; }
+      console.log(`${c.b(`PR #${st.pr.number}`)} ${st.pr.title}\n${c.dim(st.pr.url)}\nAs @${st.auth.user} · ${event.toLowerCase().replace('_', ' ')} · ${pv.review.inline.length} inline comment(s)${pv.review.unplaced.length ? `, ${pv.review.unplaced.length} moved to the summary (lines not in the PR diff)` : ''}`);
+      for (const w of st.warnings || []) console.log(c.yellow(`! ${w}`));
+      console.log(`\n${pv.review.body || c.dim('(no summary)')}\n`);
+      if (!args.yes) { console.log(c.dim('Preview only. Run again with --yes to post this review publicly.')); return; }
+      const r = await github.post(root, loaded.meta, cards, fb, { event, force: !!args.force });
+      if (!r.ok) { console.log(`${r.error}${r.duplicate ? ` (${r.duplicate.url}; add --force to post again)` : ''}`); process.exitCode = 1; return; }
+      console.log(`${c.green('✓')} Posted: ${r.url}`);
       return;
     }
     case 'init':

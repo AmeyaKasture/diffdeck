@@ -938,42 +938,182 @@ function step(delta) {
   if (next) openCard(next.id);
 }
 
-/* ---------------- hand-off drawer ---------------- */
+/* ---------------- finish drawer: agent hand-off or GitHub ---------------- */
+
+const GH = { tab: 'agent', loading: false, status: null, preview: null, login: null, event: null, ack: false, force: false, result: null, error: null, poll: null };
+const EVENT_LABEL = { COMMENT: 'Comment', REQUEST_CHANGES: 'Request changes', APPROVE: 'Approve' };
+
+function agentPanel() {
+  const generic = 'Read .diffdeck/feedback.md and implement every requested change; leave approved cards untouched.';
+  const prompts = [['Claude Code', '/diffdeck-apply'], ['Cursor', '/diffdeck-apply'], ['OpenCode', '/diffdeck-apply'], ['Any agent', generic]];
+  return `
+    <h4>Tell your agent</h4>
+    ${prompts.map(([a, p]) => `<div class="prompt-row"><span class="agent">${a}</span><code title="${esc(p)}">${esc(p)}</code><button class="btn btn-sm" data-act="copy" data-text="${esc(p)}">${ICON.copy} Copy</button></div>`).join('')}
+    <p class="muted-note">Slash commands need <code>diffdeck init</code> once per repo. Feedback is saved continuously to <code>${esc(S.data.paths.feedback)}</code>.</p>
+    <h4>feedback.md preview</h4>
+    <pre class="md" id="md-preview">${esc(S.markdown || 'Saving…')}</pre>`;
+}
+
+function copyRow(label, cmd) {
+  return `<div class="prompt-row"><span class="agent">${esc(label)}</span><code title="${esc(cmd)}">${esc(cmd)}</code><button class="btn btn-sm" data-act="copy" data-text="${esc(cmd)}">${ICON.copy} Copy</button></div>`;
+}
+
+function githubPanel() {
+  if (GH.result) {
+    return `<div class="gh-card ok"><div class="gh-big">✓ Review posted</div>
+      <p>${esc(EVENT_LABEL[GH.result.event])} with ${GH.result.inline} inline comment${GH.result.inline === 1 ? '' : 's'}${GH.result.unplaced ? ` and ${GH.result.unplaced} note${GH.result.unplaced === 1 ? '' : 's'} in the summary` : ''}.</p>
+      <a class="btn btn-primary" href="${esc(GH.result.url)}" target="_blank" rel="noopener">Open on GitHub ↗</a>
+      <button class="btn btn-ghost" data-act="gh-reset">Done</button></div>`;
+  }
+  if (GH.loading && !GH.status) return `<div class="gh-card"><span class="spinner"></span> Checking GitHub…</div>`;
+  const st = GH.status;
+  if (!st) return `<div class="gh-card"><button class="btn" data-act="gh-check">Check GitHub</button></div>`;
+  const err = GH.error ? `<div class="callout error"><div class="callout-body">${esc(GH.error)}</div></div>` : '';
+
+  if (!st.auth.installed) {
+    return `${err}<div class="gh-card"><div class="gh-step">Setup</div><b>Install the GitHub CLI</b>
+      <p>diffdeck posts through <code>gh</code>, so your token never passes through diffdeck. Install it, then come back here.</p>
+      ${copyRow('macOS', 'brew install gh')}${copyRow('Windows', 'winget install --id GitHub.cli')}${copyRow('Linux', 'https://github.com/cli/cli#installation')}
+      <button class="btn" data-act="gh-check">I've installed it — check again</button></div>`;
+  }
+  if (!st.auth.loggedIn) {
+    if (GH.login && GH.login.code) {
+      return `${err}<div class="gh-card"><div class="gh-step">Log in · one-time code</div>
+        <p>Enter this one-time code on GitHub to connect your account:</p>
+        <div class="gh-code">${esc(GH.login.code)}</div>
+        <button class="btn btn-primary" data-act="gh-open-device" data-url="${esc(GH.login.url)}" data-code="${esc(GH.login.code)}">Copy code &amp; open GitHub ↗</button>
+        <p class="muted-note"><span class="spinner"></span> Waiting for you to authorize… this page continues automatically.</p>
+        <button class="btn btn-ghost btn-sm" data-act="gh-cancel-login">Cancel</button></div>`;
+    }
+    return `${err}<div class="gh-card"><div class="gh-step">Not connected</div><b>Log in to GitHub</b>
+      <p>One click starts GitHub's secure device login. You approve it in your browser; diffdeck never sees your password or token.</p>
+      <button class="btn btn-primary" data-act="gh-login">${ICON.fork} Log in with GitHub</button>
+      <p class="muted-note">Prefer the terminal? Run <code>gh auth login</code>, then <button class="linkish" data-act="gh-check">check again</button>.</p></div>`;
+  }
+  if (!st.pr) {
+    const pe = st.prError || {};
+    return `${err}<div class="gh-card"><div class="gh-step">Signed in as @${esc(st.auth.user)}</div><b>No pull request to comment on</b>
+      <p>${esc(pe.message || 'Could not find a pull request.')}</p>
+      ${pe.error === 'no-remote' ? `<p>Publish the repository to GitHub, then open a PR:</p>${copyRow('Terminal', 'gh repo create --source . --push --private')}` : ''}
+      ${pe.error === 'no-pr' ? `<p>Push the branch and open a PR, then check again:</p>${copyRow('Terminal', 'git push -u origin HEAD && gh pr create --fill')}<p>Or review an existing PR:</p>${copyRow('Terminal', 'diffdeck review --pr <number>')}` : ''}
+      <button class="btn" data-act="gh-check">Check again</button></div>`;
+  }
+
+  const pv = GH.preview;
+  const pr = st.pr;
+  const head = `<div class="gh-target"><div><div class="gh-step">Posting as @${esc(st.auth.user)}</div>
+      <a href="${esc(pr.url)}" target="_blank" rel="noopener"><b>#${pr.number} ${esc(pr.title)}</b> ↗</a>
+      <div class="muted-note">${esc(pr.headRefName)} → ${esc(pr.baseRefName)}${pr.isDraft ? ' · draft' : ''}</div></div>
+      <button class="btn btn-sm btn-ghost" data-act="gh-check" title="Refresh">↻ Refresh</button></div>`;
+  const warns = (st.warnings || []).map((w) => `<li>${esc(w)}</li>`).join('');
+  if (!pv) return `${err}${head}<div class="gh-card"><span class="spinner"></span> Building the review…</div>`;
+  if (pv.error) return `${err}${head}<div class="callout error"><div class="callout-body">${esc(pv.error)}</div></div>`;
+  const rv = pv.review;
+  const empty = !rv.body.trim() && !rv.inline.length;
+  const event = GH.event && pv.allowedEvents.includes(GH.event) ? GH.event : rv.suggestedEvent;
+  const dup = pv.alreadyPosted;
+  const canPost = !empty && GH.ack && (!dup || GH.force) && pr.state === 'OPEN';
+  return `${err}${head}
+    ${warns ? `<div class="callout warn"><div class="callout-body"><ul>${warns}</ul></div></div>` : ''}
+    <h4>Review type</h4>
+    <div class="seg gh-events">${['COMMENT', 'REQUEST_CHANGES', 'APPROVE'].map((e) => {
+      const ok = pv.allowedEvents.includes(e);
+      return `<button class="${event === e ? 'on' : ''}" data-act="gh-event" data-v="${e}" ${ok ? '' : 'disabled title="GitHub does not allow this on your own pull request"'}>${EVENT_LABEL[e]}</button>`;
+    }).join('')}</div>
+    ${st.selfReview ? '<p class="muted-note">This is your own PR, so GitHub only allows comments.</p>' : ''}
+    <h4>Inline comments <span class="n">${rv.inline.length}</span></h4>
+    ${rv.inline.length ? `<ul class="gh-list">${rv.inline.map((c) => `<li><code>${esc(c.path)}:${c.line}</code> ${esc(c.body.length > 90 ? c.body.slice(0, 90) + '…' : c.body)}</li>`).join('')}</ul>` : '<p class="muted-note">No line notes yet. Click a line number in a card’s code to add one.</p>'}
+    ${rv.unplaced.length ? `<p class="muted-note">⚠ ${rv.unplaced.length} note${rv.unplaced.length === 1 ? '' : 's'} refer${rv.unplaced.length === 1 ? 's' : ''} to lines that are not in the PR's current diff, so ${rv.unplaced.length === 1 ? 'it goes' : 'they go'} into the summary.</p>` : ''}
+    <h4>Summary comment</h4>
+    <pre class="md">${esc(rv.body || '(empty)')}</pre>
+    ${dup ? `<div class="callout warn"><div class="callout-body">You already posted this exact review on ${esc(new Date(dup.postedAt).toLocaleString())}. <a href="${esc(dup.url)}" target="_blank" rel="noopener">View it ↗</a>
+      <label class="check"><input type="checkbox" data-act="gh-force" ${GH.force ? 'checked' : ''}> Post it again anyway</label></div></div>` : ''}
+    ${empty ? '<p class="muted-note">Nothing to post yet: add notes, pick alternatives or approve cards first.</p>' : `
+    <label class="check gh-ack"><input type="checkbox" data-act="gh-ack" ${GH.ack ? 'checked' : ''}> I understand this posts publicly on PR #${pr.number} as @${esc(st.auth.user)}.</label>
+    <button class="btn btn-primary gh-post" data-act="gh-post" ${canPost ? '' : 'disabled'}>Post ${EVENT_LABEL[event].toLowerCase()} to GitHub</button>`}`;
+}
 
 function renderDrawer() {
+  const drawer = $('#drawer');
+  if (drawer.hidden) return;
   const cards = S.data.cards;
   const approved = cards.filter((c) => cardStatus(c.id) === 'approved').length;
   const todo = cards.filter((c) => !cardStatus(c.id)).length;
-  const fbPath = S.data.paths.feedback;
-  const generic = 'Read .diffdeck/feedback.md and implement every requested change; leave approved cards untouched.';
-  const prompts = [
-    ['Claude Code', '/diffdeck-apply'],
-    ['Cursor', '/diffdeck-apply'],
-    ['OpenCode', '/diffdeck-apply'],
-    ['Any agent', generic],
-  ];
-  $('#drawer').innerHTML = `
-    <div class="drawer-head"><h3>Hand off to your agent</h3><button class="btn btn-icon btn-ghost" data-act="close-drawer" aria-label="Close">${ICON.close}</button></div>
+  const body = $('.drawer-body', drawer);
+  const top = body ? body.scrollTop : 0;
+  drawer.innerHTML = `
+    <div class="drawer-head"><h3>Finish review</h3><button class="btn btn-icon btn-ghost" data-act="close-drawer" aria-label="Close">${ICON.close}</button></div>
     <div class="drawer-body">
       <div class="summary-tiles">
-        <div class="stat"><div class="v">${S.actionable}</div><div class="l">requested changes</div></div>
+        <div class="stat"><div class="v" id="tile-actionable">${S.actionable}</div><div class="l">requested changes</div></div>
         <div class="stat"><div class="v">${approved}</div><div class="l">approved cards</div></div>
         <div class="stat"><div class="v">${todo}</div><div class="l">not yet reviewed</div></div>
       </div>
       <h4>Overall comment</h4>
       <textarea class="note" rows="3" data-input="general" placeholder="Anything that applies to the whole change…">${esc(S.fb.general)}</textarea>
-      <h4>Tell your agent</h4>
-      ${prompts.map(([a, p]) => `<div class="prompt-row"><span class="agent">${a}</span><code title="${esc(p)}">${esc(p)}</code><button class="btn btn-sm" data-act="copy" data-text="${esc(p)}">${ICON.copy} Copy</button></div>`).join('')}
-      <p style="font-size:12.5px;color:var(--ink-3);margin:6px 0 0">Slash commands need <code>diffdeck init</code> once per repo. Feedback is saved continuously to <code>${esc(fbPath)}</code>.</p>
-      <h4>feedback.md preview</h4>
-      <pre class="md" id="md-preview">${esc(S.markdown || 'Saving…')}</pre>
+      <div class="finish-tabs">
+        <button class="finish-tab ${GH.tab === 'agent' ? 'on' : ''}" data-act="finish-tab" data-v="agent"><span class="ft-ic">⚙</span><span><b>Hand off to agent</b><small>Your coding agent implements the feedback</small></span></button>
+        <button class="finish-tab ${GH.tab === 'github' ? 'on' : ''}" data-act="finish-tab" data-v="github"><span class="ft-ic">⑂</span><span><b>Post on GitHub</b><small>Publish as a pull request review</small></span></button>
+      </div>
+      <div class="finish-panel">${GH.tab === 'agent' ? agentPanel() : githubPanel()}</div>
     </div>`;
+  const nb = $('.drawer-body', drawer);
+  if (nb) nb.scrollTop = top;
+}
+
+async function ghCheck() {
+  GH.loading = true; GH.error = null; GH.preview = null; GH.ack = false; GH.force = false;
+  renderDrawer();
+  try {
+    await saveNow();
+    GH.status = await (await fetch('/api/github/status')).json();
+    if (GH.status.auth && GH.status.auth.loggedIn) { stopLoginPoll(); GH.login = null; }
+    renderDrawer();
+    if (GH.status.pr) {
+      GH.preview = await (await fetch('/api/github/preview')).json();
+      if (GH.preview.status) GH.status = GH.preview.status;
+    }
+  } catch (e) { GH.error = e.message; }
+  GH.loading = false;
+  renderDrawer();
+}
+
+function stopLoginPoll() { clearInterval(GH.poll); GH.poll = null; }
+
+async function ghLogin() {
+  GH.error = null;
+  const r = await (await fetch('/api/github/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
+  if (r.error) { GH.error = r.error; renderDrawer(); return; }
+  if (r.done) { ghCheck(); return; }
+  GH.login = r;
+  renderDrawer();
+  stopLoginPoll();
+  GH.poll = setInterval(async () => {
+    try {
+      const st = await (await fetch('/api/github/status')).json();
+      if (st.auth && st.auth.loggedIn) { stopLoginPoll(); GH.login = null; toast(`Connected as @${st.auth.user}`); ghCheck(); }
+    } catch { /* keep polling */ }
+  }, 2500);
+}
+
+async function ghPost() {
+  const event = GH.event && GH.preview.allowedEvents.includes(GH.event) ? GH.event : GH.preview.review.suggestedEvent;
+  const btn = $('.gh-post');
+  if (btn) { btn.disabled = true; btn.textContent = 'Posting…'; }
+  await saveNow();
+  const res = await fetch('/api/github/post', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true, event, force: GH.force }) });
+  const r = await res.json();
+  if (r.ok) { GH.result = r; toast('Review posted to GitHub'); renderDrawer(); return; }
+  GH.error = r.error || 'Posting failed.';
+  GH.ack = false;
+  await ghCheck();
 }
 
 function openDrawer() {
   $('#drawer').hidden = false;
   renderDrawer();
   saveNow();
+  if (GH.tab === 'github' && !GH.status) ghCheck();
 }
 
 /* ---------------- persistence ---------------- */
@@ -997,10 +1137,8 @@ async function saveNow() {
     renderTopbar();
     const pre = $('#md-preview');
     if (pre) pre.textContent = S.markdown;
-    if (!$('#drawer').hidden) {
-      const tiles = $('#drawer .summary-tiles .v');
-      if (tiles) tiles.textContent = S.actionable;
-    }
+    const tile = $('#tile-actionable');
+    if (tile) tile.textContent = S.actionable;
   } catch (e) {
     setSaveState(`Not saved: ${e.message}`, 'error');
   }
@@ -1136,7 +1274,24 @@ document.addEventListener('click', (e) => {
     }
     case 'del-c': S.fb.lines = S.fb.lines.filter((x) => x.id !== t.dataset.cid); renderSheet(); scheduleSave(); break;
     case 'copy': copy(t.dataset.text); break;
-    case 'close-drawer': $('#drawer').hidden = true; renderGridOnly(); break;
+    case 'close-drawer': $('#drawer').hidden = true; stopLoginPoll(); renderGridOnly(); break;
+    case 'finish-tab':
+      GH.tab = t.dataset.v; renderDrawer();
+      if (GH.tab === 'github' && !GH.loading) ghCheck();
+      break;
+    case 'gh-check': ghCheck(); break;
+    case 'gh-login': ghLogin(); break;
+    case 'gh-cancel-login':
+      stopLoginPoll(); GH.login = null;
+      fetch('/api/github/login/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      renderDrawer();
+      break;
+    case 'gh-open-device': copy(t.dataset.code); window.open(t.dataset.url, '_blank', 'noopener'); break;
+    case 'gh-event': if (!t.disabled) { GH.event = t.dataset.v; renderDrawer(); } break;
+    case 'gh-ack': GH.ack = t.checked; renderDrawer(); break;
+    case 'gh-force': GH.force = t.checked; renderDrawer(); break;
+    case 'gh-post': if (!t.disabled) ghPost(); break;
+    case 'gh-reset': GH.result = null; ghCheck(); break;
   }
 });
 

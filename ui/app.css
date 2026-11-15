@@ -523,6 +523,46 @@ tr.line.focus td { background-image: linear-gradient(rgba(52, 81, 209, .09), rgb
 .decision.flash { animation: flash 1.6s ease; }
 @keyframes flash { 0%, 40% { box-shadow: 0 0 0 4px rgba(52, 81, 209, .35); border-color: var(--accent); } }
 
+/* ---------- Finish drawer ---------- */
+.muted-note { font-size: 12.5px; color: var(--ink-3); margin: 6px 0 10px; }
+.finish-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 18px 0 4px; }
+.finish-tab {
+  display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 11px 12px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel); transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.finish-tab:hover { border-color: #D3CFC4; }
+.finish-tab.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 3px rgba(52, 81, 209, .12); }
+.finish-tab b { display: block; font-size: 13.5px; }
+.finish-tab small { display: block; font-size: 11.5px; color: var(--ink-3); margin-top: 2px; line-height: 1.35; }
+.ft-ic { width: 26px; height: 26px; flex: none; border-radius: 8px; display: grid; place-items: center; background: var(--panel-3); color: var(--ink-2); font-size: 14px; }
+.finish-tab.on .ft-ic { background: var(--accent); color: #fff; }
+.finish-panel { margin-top: 6px; }
+.gh-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 14px; background: var(--panel-2); font-size: 13.5px; }
+.gh-card p { color: var(--ink-2); margin: 6px 0 10px; }
+.gh-card.ok { background: var(--low-bg); border-color: #B7E0C6; }
+.gh-big { font-size: 18px; font-weight: 650; color: var(--low); }
+.gh-step { font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+.gh-code { font: 700 30px var(--mono); letter-spacing: .12em; text-align: center; padding: 14px; margin: 6px 0 12px; border: 1.5px dashed var(--accent-line); border-radius: 12px; background: var(--panel); color: var(--ink); }
+.gh-target { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
+.gh-target a { color: var(--ink); text-decoration: none; }
+.gh-target a:hover { color: var(--accent); }
+.gh-events { width: 100%; }
+.gh-events button { flex: 1; }
+.gh-events button:disabled { opacity: .45; cursor: not-allowed; }
+.gh-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; max-height: 180px; overflow: auto; }
+.gh-list li { padding: 7px 10px; font-size: 12.5px; color: var(--ink-2); border-bottom: 1px solid var(--line-2); }
+.gh-list li:last-child { border-bottom: 0; }
+.gh-list code { color: var(--accent-ink); margin-right: 6px; }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--ink-2); margin: 10px 0; cursor: pointer; }
+.check input { margin-top: 3px; accent-color: var(--accent); }
+.gh-ack { margin-top: 16px; }
+.gh-post { width: 100%; justify-content: center; padding: 10px; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.linkish { border: 0; background: none; padding: 0; color: var(--accent); font-size: inherit; text-decoration: underline; }
+.spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--accent-line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.side-sec h4 .n, .drawer-body h4 .n { background: var(--panel-3); color: var(--ink-2); border-radius: 999px; padding: 0 7px; letter-spacing: 0; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 60;

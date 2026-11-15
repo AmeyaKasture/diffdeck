@@ -130,6 +130,33 @@ test('renders actionable feedback and approved cards', () => {
   assert.match(markdown, /## Approved — do not change\n\n- Docs `docs`/);
 });
 
+test('github review maps lines to the PR diff and summarises the rest', () => {
+  const { buildReview } = require('../lib/github');
+  const files = parseDiff(PATCH);
+  const cards = [{ id: 'retry', title: 'Retry', hunks: [], decisions: [{
+    question: 'Which errors?', chosen: { label: 'All', description: 'everything', pros: [], cons: [] },
+    alternatives: [{ label: 'Idempotent only', description: 'GET/PUT', pros: ['safe'], cons: [] }] }] },
+    { id: 'docs', title: 'Docs', hunks: [], decisions: [] }];
+  const fb = sanitize({
+    cards: { retry: { status: 'changes' }, docs: { status: 'approved' } },
+    decisions: { 'retry::0': { preferred: 0 } },
+    lines: [
+      { id: '1', cardId: 'retry', file: 'src/a.js', side: 'new', line: 2, comment: 'inline me' },
+      { id: '2', cardId: 'retry', file: 'src/a.js', side: 'old', line: 2, comment: 'old side' },
+      { id: '3', cardId: 'retry', file: 'src/a.js', side: 'new', line: 99, comment: 'not in diff' },
+    ],
+  });
+  const r = buildReview(cards, fb, files);
+  assert.deepStrictEqual(r.inline.map((c) => [c.path, c.line, c.side]), [['src/a.js', 2, 'RIGHT'], ['src/a.js', 2, 'LEFT']]);
+  assert.strictEqual(r.unplaced.length, 1);
+  assert.match(r.body, /switch from \*All\* to \*\*Idempotent only\*\*/);
+  assert.match(r.body, /`src\/a\.js:99`: not in diff/);
+  assert.match(r.body, /### Looks good\n- Docs/);
+  assert.strictEqual(r.suggestedEvent, 'REQUEST_CHANGES');
+  const ok = buildReview([cards[1]], sanitize({ cards: { docs: { status: 'approved' } } }), files);
+  assert.strictEqual(ok.suggestedEvent, 'APPROVE');
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message}`); }

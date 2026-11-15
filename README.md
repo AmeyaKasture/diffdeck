@@ -28,8 +28,19 @@ A review takes four commands. Steps 2 and 4 run in your coding agent; the rest r
 
 ```sh
 npm install -g github:AmeyaKasture/diffdeck
-diffdeck --version     # prints 0.1.0
+diffdeck --version
 ```
+
+Already installed? Update with:
+
+```sh
+diffdeck upgrade
+```
+
+`upgrade` checks GitHub for a newer version and installs it. It also refreshes the slash
+commands in the repository you run it from, and restarts that repository's review server if
+one is running. Use `--force` to reinstall the same version. Versions before 0.2.0 have no
+`upgrade` command, so update those once with `npm install -g github:AmeyaKasture/diffdeck`.
 
 Requires Node 18+ and git. To review GitHub pull requests, you also need the
 [GitHub CLI](https://cli.github.com) (`brew install gh`, `winget install --id GitHub.cli`).
@@ -100,6 +111,7 @@ When you are done, use one of the two buttons at the top right:
 | `diffdeck stop` | Stop the background server |
 | `diffdeck post` / `diffdeck post --yes` | Preview, then publish, the GitHub review from the terminal |
 | `diffdeck login` | Log in to GitHub through `gh` |
+| `diffdeck upgrade` | Update diffdeck to the latest version |
 
 The [command reference](#command-reference) lists every command and option.
 
@@ -215,6 +227,7 @@ Files: `src/client.js`
 | `diffdeck post` | Previews your review for the pull request; nothing is sent |
 | `diffdeck post --yes [--event comment\|request-changes\|approve]` | Posts the review on GitHub (`--force` re-posts an identical review) |
 | `diffdeck login` | Logs in to GitHub through `gh` (browser device flow) |
+| `diffdeck upgrade [--force]` | Updates diffdeck from GitHub (via npm, or `git pull` for a clone install), refreshes this repository's slash commands, and restarts its running server |
 | `diffdeck validate` | Checks the agent's `breakdown.json` and reports precise errors |
 | `diffdeck feedback` | Prints `feedback.md` |
 
@@ -314,7 +327,8 @@ Flowchart `shape`: `start` · `end` · `step` · `decision` · `io`.
 No. diffdeck makes no network requests of its own. The server listens only on
 `127.0.0.1` and rejects requests from other origins. GitHub is contacted only through
 `gh`, and only when you ask: to fetch a PR (`--pr`), to check which PR you are
-reviewing, or to post a review you have confirmed.
+reviewing, or to post a review you have confirmed. `diffdeck upgrade` downloads the
+latest version from GitHub when you run it.
 
 **What does a posted review look like?**
 Line notes appear as inline comments on the exact lines. The summary lists each
@@ -351,7 +365,3 @@ The UI is plain HTML, CSS and JavaScript in [`ui/`](ui), with no build step.
 [`ui/graph.js`](ui/graph.js) holds a small layered-graph layout engine (in the
 style of Sugiyama: ranking, crossing reduction, and placement with path-following
 edge labels).
-
-## License
-
-[MIT](LICENSE)

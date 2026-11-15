@@ -33,6 +33,7 @@ ${c.b('Usage')}
   diffdeck post [--event comment|request-changes|approve] [--yes]
                                 Preview your review for the PR; with --yes, post it to GitHub
   diffdeck login                Log in to GitHub (via the gh CLI)
+  diffdeck upgrade [--force]    Update diffdeck to the latest version from GitHub
   diffdeck validate             Check .diffdeck/breakdown.json
   diffdeck feedback             Print .diffdeck/feedback.md
 
@@ -173,10 +174,77 @@ async function doStop(dir) {
   console.log(`${c.green('✓')} Stopped the diffdeck server at ${info.url}`);
 }
 
+/* ---------------- upgrade ---------------- */
+
+const REPO = 'AmeyaKasture/diffdeck';
+const PKG_ROOT = path.join(__dirname, '..');
+
+function newer(a, b) { // true when version a is newer than b
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
+}
+
+function runInherit(cmd, argv, opts = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, argv, { stdio: 'inherit', shell: process.platform === 'win32', ...opts });
+    child.on('exit', (code) => resolve(code));
+    child.on('error', () => resolve(-1));
+  });
+}
+
+async function doUpgrade(args) {
+  const via = PKG_ROOT.includes(`${path.sep}_npx${path.sep}`) ? 'npx' : fs.existsSync(path.join(PKG_ROOT, '.git')) ? 'clone' : 'npm';
+  if (via === 'npx') {
+    console.log(`You are running diffdeck through npx, which keeps a cached copy. Install it once with\n  ${c.b(`npm install -g github:${REPO}`)}\nand from then on use ${c.b('diffdeck upgrade')}.`);
+    return;
+  }
+
+  let latest;
+  try {
+    const res = await fetch(`https://raw.githubusercontent.com/${REPO}/main/package.json`, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    latest = (await res.json()).version;
+  } catch (e) {
+    throw new Error(`Could not check GitHub for a new version (${e.message}). To upgrade manually: npm install -g github:${REPO}`);
+  }
+  if (!args.force && !newer(latest, version)) {
+    console.log(`${c.green('✓')} diffdeck ${version} is the latest version.${latest !== version ? c.dim(` (GitHub has ${latest})`) : ''}`);
+    return;
+  }
+  console.log(`Upgrading diffdeck ${version} → ${latest}…`);
+
+  let code;
+  if (via === 'clone') {
+    console.log(c.dim(`  installed from a clone at ${PKG_ROOT}; running git pull`));
+    code = await runInherit('git', ['-C', PKG_ROOT, 'pull', '--ff-only']);
+    if (code !== 0) throw new Error(`git pull failed in ${PKG_ROOT}. Commit or stash local changes there, then run diffdeck upgrade again.`);
+  } else {
+    code = await runInherit('npm', ['install', '-g', `github:${REPO}`]);
+    if (code !== 0) throw new Error(`npm could not install the new version. If it reported a permission error (EACCES), run: sudo npm install -g github:${REPO}`);
+  }
+  const installed = JSON.parse(fs.readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8')).version;
+  console.log(`${c.green('✓')} diffdeck is now ${installed}.`);
+
+  // Refresh this repository's agent commands and restart its server so both use the new version.
+  let root;
+  try { root = repoRoot(process.cwd()); } catch { return; }
+  const bin = path.join(PKG_ROOT, 'bin', 'diffdeck.js');
+  const targets = [['claude', '.claude/commands'], ['cursor', '.cursor/commands'], ['opencode', '.opencode/command']]
+    .filter(([, d]) => fs.existsSync(path.join(root, d, 'diffdeck-breakdown.md'))).map(([t]) => t);
+  if (targets.length) {
+    await runInherit(process.execPath, [bin, 'init', targets.join(','), '--quiet'], { cwd: root });
+  }
+  if (await runningServer(workDir(root))) {
+    await runInherit(process.execPath, [bin, 'stop'], { cwd: root });
+    await runInherit(process.execPath, [bin, 'serve', '--background', '--no-open'], { cwd: root });
+  }
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const first = argv[0];
-  const known = ['review', 'demo', 'init', 'agent-setup', 'prepare', 'serve', 'stop', 'validate', 'feedback', 'post', 'login', 'help'];
+  const known = ['review', 'demo', 'init', 'agent-setup', 'prepare', 'serve', 'stop', 'validate', 'feedback', 'post', 'login', 'upgrade', 'help'];
   const cmd = !first || first.startsWith('-') ? 'review' : first;
   const args = parseArgs(cmd === first ? argv.slice(1) : argv);
 
@@ -184,6 +252,8 @@ async function main() {
   if (args.version || argv.includes('-v')) { console.log(version); return; }
   if (args.y) args.yes = true;
   if (!known.includes(cmd)) { process.stderr.write(`Unknown command "${cmd}".\n\n${HELP}`); process.exitCode = 2; return; }
+
+  if (cmd === 'upgrade') { await doUpgrade(args); return; }
 
   if (cmd === 'demo') {
     const { createDemo } = require('../lib/demo');
@@ -266,8 +336,9 @@ async function main() {
     case 'agent-setup': {
       const which = args._[0] || 'all';
       const written = installCommands(root, which === 'all' ? AGENT_TARGETS : which.split(','));
-      console.log(`${c.green('✓')} Added agent commands:`);
+      console.log(`${c.green('✓')} ${args.quiet ? 'Refreshed' : 'Added'} agent commands:`);
       for (const w of written) console.log(`  ${w}`);
+      if (args.quiet) return;
       console.log(`\nFor other agents (Codex, Aider, ...), add this to ${c.b('AGENTS.md')}:\n`);
       console.log(AGENTS_MD_SNIPPET);
       return;

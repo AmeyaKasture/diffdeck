@@ -38,7 +38,7 @@ diffdeck upgrade
 ```
 
 `upgrade` checks GitHub for a newer version and installs it. It also refreshes the slash
-commands in the repository you run it from, and restarts that repository's review server if
+commands in the repository you run it from, and restarts the review server if
 one is running. Use `--force` to reinstall the same version. Versions before 0.2.0 have no
 `upgrade` command, so update those once with `npm install -g github:AmeyaKasture/diffdeck`.
 
@@ -79,13 +79,19 @@ The agent then:
 2. reads the diff and the surrounding code, and writes the breakdown: a system diagram,
    change cards, logic flowcharts, and the design decisions with their alternatives
 3. checks its own work with `diffdeck validate`
-4. starts the review server in the background and opens your browser (`diffdeck serve --background`)
+4. adds the repository to the review server and opens your browser (`diffdeck serve`)
 
 It finishes with the link and its main findings:
 
 ```
-The review is open at http://127.0.0.1:4777/ (running in the background; stop it with diffdeck stop).
+The review is open at http://127.0.0.1:4777/agentic-cloud/ (all reviews: http://127.0.0.1:4777/).
 ```
+
+**Each repository gets its own address.** One background server hosts all your reviews, at
+`http://127.0.0.1:4777/<repository-name>/`. Breaking down a PR in a second repository adds
+`/<second-name>/` next to the first, so there is nothing to stop or restart.
+`http://127.0.0.1:4777/` lists every review with its progress. If two different repositories
+share a folder name, the second one gets `-2`, as in `/api/` and `/api-2/`.
 
 If you leave out the link, the agent asks for it before doing anything. If the PR belongs to
 another repository, the agent runs from your local clone of that repository.
@@ -105,10 +111,12 @@ When you are done, use one of the two buttons at the top right:
 
 | Command | When to use it |
 |---|---|
-| `diffdeck` | Reopen the review. It reuses the running server, or starts one, and keeps reviewing the PR that was prepared |
+| `diffdeck` | Reopen this repository's review at `http://127.0.0.1:4777/<repository-name>/`. It keeps reviewing the PR that was prepared, and starts the server only if it is not running |
 | `diffdeck review <PR link>` | Review a different PR yourself, without an agent. The diagram shows changed files until a breakdown exists |
 | `diffdeck review main` | Review your current branch against `main` instead of a PR |
-| `diffdeck stop` | Stop the background server |
+| `diffdeck list` | Show every repository on the server and its address |
+| `diffdeck stop` | Remove this repository's review from the server (the others keep running) |
+| `diffdeck stop --all` | Stop the server and every review on it |
 | `diffdeck post` / `diffdeck post --yes` | Preview, then publish, the GitHub review from the terminal |
 | `diffdeck login` | Log in to GitHub through `gh` |
 | `diffdeck upgrade` | Update diffdeck to the latest version |
@@ -221,17 +229,22 @@ Files: `src/client.js`
 | `diffdeck demo` | Opens the sample review |
 | `diffdeck init [claude\|cursor\|opencode\|all]` | Adds the `/diffdeck-breakdown` and `/diffdeck-apply` commands to the repo |
 | `diffdeck prepare [same options]` | Only collects the diff; this is what agents run |
-| `diffdeck serve` | Only opens the UI for the prepared diff, in the foreground (Ctrl+C stops it) |
-| `diffdeck serve --background` | Starts the UI server in the background and returns; reuses a server that is already running |
-| `diffdeck stop` | Stops the background server for this repository |
+| `diffdeck serve` | Adds this repository to the shared server (starting it in the background if needed) and opens `http://127.0.0.1:4777/<repository-name>/`, without collecting the diff again |
+| `diffdeck serve --foreground` | Runs the shared server in this terminal instead (Ctrl+C stops it), which is useful for debugging |
+| `diffdeck list` | Lists every repository on the server with its address and folder |
+| `diffdeck stop` | Removes this repository from the server; the server stops itself when no reviews are left |
+| `diffdeck stop --all` | Stops the server and every review on it |
 | `diffdeck post` | Previews your review for the pull request; nothing is sent |
 | `diffdeck post --yes [--event comment\|request-changes\|approve]` | Posts the review on GitHub (`--force` re-posts an identical review) |
 | `diffdeck login` | Logs in to GitHub through `gh` (browser device flow) |
-| `diffdeck upgrade [--force]` | Updates diffdeck from GitHub (via npm, or `git pull` for a clone install), refreshes this repository's slash commands, and restarts its running server |
+| `diffdeck upgrade [--force]` | Updates diffdeck from GitHub (via npm, or `git pull` for a clone install), refreshes this repository's slash commands, and restarts the running server (every review keeps its address) |
 | `diffdeck validate` | Checks the agent's `breakdown.json` and reports precise errors |
 | `diffdeck feedback` | Prints `feedback.md` |
 
 Options: `--port <n>` (default `4777`, then the next free port), `--no-open`, `--version`, `--help`.
+
+The list of repositories on the server lives in `~/.diffdeck/repos.json`, and the server's
+address in `~/.diffdeck/hub.json`. Set `DIFFDECK_HOME` to keep them somewhere else.
 
 Running `diffdeck` again on the same diff keeps the breakdown and your feedback.
 When the diff changes, the old files are kept as `*.prev`, because their line

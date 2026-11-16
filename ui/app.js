@@ -1066,11 +1066,11 @@ async function ghCheck() {
   renderDrawer();
   try {
     await saveNow();
-    GH.status = await (await fetch('/api/github/status')).json();
+    GH.status = await (await fetch('api/github/status')).json();
     if (GH.status.auth && GH.status.auth.loggedIn) { stopLoginPoll(); GH.login = null; }
     renderDrawer();
     if (GH.status.pr) {
-      GH.preview = await (await fetch('/api/github/preview')).json();
+      GH.preview = await (await fetch('api/github/preview')).json();
       if (GH.preview.status) GH.status = GH.preview.status;
     }
   } catch (e) { GH.error = e.message; }
@@ -1082,7 +1082,7 @@ function stopLoginPoll() { clearInterval(GH.poll); GH.poll = null; }
 
 async function ghLogin() {
   GH.error = null;
-  const r = await (await fetch('/api/github/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
+  const r = await (await fetch('api/github/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
   if (r.error) { GH.error = r.error; renderDrawer(); return; }
   if (r.done) { ghCheck(); return; }
   GH.login = r;
@@ -1090,7 +1090,7 @@ async function ghLogin() {
   stopLoginPoll();
   GH.poll = setInterval(async () => {
     try {
-      const st = await (await fetch('/api/github/status')).json();
+      const st = await (await fetch('api/github/status')).json();
       if (st.auth && st.auth.loggedIn) { stopLoginPoll(); GH.login = null; toast(`Connected as @${st.auth.user}`); ghCheck(); }
     } catch { /* keep polling */ }
   }, 2500);
@@ -1101,7 +1101,7 @@ async function ghPost() {
   const btn = $('.gh-post');
   if (btn) { btn.disabled = true; btn.textContent = 'Posting…'; }
   await saveNow();
-  const res = await fetch('/api/github/post', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true, event, force: GH.force }) });
+  const res = await fetch('api/github/post', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true, event, force: GH.force }) });
   const r = await res.json();
   if (r.ok) { GH.result = r; toast('Review posted to GitHub'); renderDrawer(); return; }
   GH.error = r.error || 'Posting failed.';
@@ -1129,7 +1129,7 @@ async function saveNow() {
   clearTimeout(S.saveTimer);
   setSaveState('Saving…', 'saving');
   try {
-    const res = await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(S.fb) });
+    const res = await fetch('api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(S.fb) });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || res.statusText);
     S.markdown = body.markdown;
@@ -1285,7 +1285,7 @@ document.addEventListener('click', (e) => {
     case 'gh-login': ghLogin(); break;
     case 'gh-cancel-login':
       stopLoginPoll(); GH.login = null;
-      fetch('/api/github/login/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      fetch('api/github/login/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       renderDrawer();
       break;
     case 'gh-open-device': copy(t.dataset.code); window.open(t.dataset.url, '_blank', 'noopener'); break;
@@ -1338,7 +1338,7 @@ document.addEventListener('keydown', (e) => {
 /* ---------------- boot + live reload ---------------- */
 
 async function loadState(initial) {
-  const res = await fetch('/api/state');
+  const res = await fetch('api/state');
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || res.statusText);
   S.data = data;
@@ -1351,7 +1351,7 @@ async function loadState(initial) {
 
 async function poll() {
   try {
-    const res = await fetch('/api/version');
+    const res = await fetch('api/version');
     const { version } = await res.json();
     if (S.data && version !== S.data.version) {
       await loadState(false);

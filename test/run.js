@@ -157,6 +157,26 @@ test('github review maps lines to the PR diff and summarises the rest', () => {
   assert.strictEqual(ok.suggestedEvent, 'APPROVE');
 });
 
+test('hub gives each repository its own address', () => {
+  const fs = require('fs'); const os = require('os'); const path = require('path');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dd-hub-'));
+  process.env.DIFFDECK_HOME = path.join(tmp, 'home');
+  delete require.cache[require.resolve('../lib/hub')];
+  const hub = require('../lib/hub');
+  const mk = (rel) => { const r = path.join(tmp, rel); fs.mkdirSync(path.join(r, '.diffdeck'), { recursive: true }); fs.writeFileSync(path.join(r, '.diffdeck', 'diff.json'), '{}'); return r; };
+  const a = mk('one/My Repo'); const b = mk('two/My Repo'); const c = mk('api');
+  assert.strictEqual(hub.register(a), 'my-repo');
+  assert.strictEqual(hub.register(b), 'my-repo-2', 'same folder name, different repo');
+  assert.strictEqual(hub.register(a), 'my-repo', 'stable for the same repo');
+  assert.strictEqual(hub.register(c, 'demo'), 'demo');
+  assert.deepStrictEqual(Object.keys(hub.repos()).sort(), ['demo', 'my-repo', 'my-repo-2']);
+  assert.strictEqual(hub.unregister(b), 'my-repo-2');
+  fs.rmSync(path.join(c, '.diffdeck'), { recursive: true });
+  assert.deepStrictEqual(Object.keys(hub.repos()), ['my-repo'], 'unprepared repos are dropped');
+  fs.rmSync(tmp, { recursive: true, force: true });
+  delete process.env.DIFFDECK_HOME;
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message}`); }

@@ -4,9 +4,11 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const os = require('os');
 const { repoRoot, workDir, prepare, defaultBase } = require('../lib/source');
 const { load } = require('../lib/breakdown');
-const { serve } = require('../lib/server');
+const { listen } = require('../lib/server');
+const hub = require('../lib/hub');
 const { installCommands, AGENTS_MD_SNIPPET, AGENT_TARGETS } = require('../lib/agent');
 const { version } = require('../package.json');
 
@@ -17,7 +19,7 @@ const c = process.stdout.isTTY && !process.env.NO_COLOR
 const HELP = `${c.b('diffdeck')} ${c.dim(`v${version}`)} — review a diff or PR as an interactive flow diagram
 
 ${c.b('Usage')}
-  diffdeck                      Review this branch (auto-detects main/master) and open the browser
+  diffdeck                      Open this repository's review (the prepared PR, or this branch vs main)
   diffdeck review <base>        Review against a branch, e.g. ${c.blue('diffdeck review develop')}
   diffdeck review <PR link>     Review a GitHub pull request, e.g. https://github.com/org/repo/pull/42
   diffdeck review --pr <n|link> Same, by number or link (needs the gh CLI)
@@ -28,8 +30,10 @@ ${c.b('Usage')}
   diffdeck init [agent]         Add /diffdeck-breakdown and /diffdeck-apply commands to this repo
                                 agent: ${AGENT_TARGETS.join(' | ')} | all (default)
   diffdeck prepare [same args]  Only collect the diff (what agents run)
-  diffdeck serve [--background] Open the UI for the prepared diff (--background: keep it running and return)
-  diffdeck stop                 Stop a background server
+  diffdeck serve                Open this repository's review at http://127.0.0.1:4777/<repo>/
+                                (one background server hosts every repository; --foreground to debug)
+  diffdeck list                 Show every repository on the server and its address
+  diffdeck stop [--all]         Remove this repository from the server (--all: stop the server)
   diffdeck post [--event comment|request-changes|approve] [--yes]
                                 Preview your review for the PR; with --yes, post it to GitHub
   diffdeck login                Log in to GitHub (via the gh CLI)
@@ -99,79 +103,114 @@ function doPrepare(root, args) {
   return r;
 }
 
-// A server started by `diffdeck serve` records itself in .diffdeck/server.json
-// so later commands (and agents) reuse it instead of starting another one.
-function serverFile(dir) { return path.join(dir, 'server.json'); }
+/* ---------------- the shared server ---------------- */
 
-async function runningServer(dir) {
-  let info;
-  try { info = JSON.parse(fs.readFileSync(serverFile(dir), 'utf8')); } catch { return null; }
-  try { process.kill(info.pid, 0); } catch { return null; }
-  try {
-    const res = await fetch(`${info.url}api/version`, { signal: AbortSignal.timeout(1500) });
-    return res.ok ? info : null;
-  } catch { return null; }
-}
+// One server hosts every repository at http://127.0.0.1:<port>/<repo>/.
+// `serve` registers the repository and starts the server only if needed.
 
-function printRunning(dir, url, background) {
+function printRunning(dir, url) {
   const hasBreakdown = fs.existsSync(path.join(dir, 'breakdown.json'));
   console.log(`${c.green('✓')} The review is open at ${c.b(c.blue(url))}`);
   if (!hasBreakdown) console.log(`  ${c.yellow('No breakdown yet.')} In your agent run ${c.b('/diffdeck-breakdown <PR link>')}; the page updates by itself.`);
   console.log(`  Feedback is saved to ${c.dim(path.join(dir, 'feedback.md'))}`);
-  console.log(c.dim(background ? '  The server runs in the background. Stop it with: diffdeck stop' : '  Press Ctrl+C to stop.'));
+  console.log(c.dim('  All reviews on this server: ' + url.replace(/[^/]+\/$/, '') + '   ·   remove this one: diffdeck stop'));
 }
 
-async function doServe(dir, args) {
-  load(dir); // fail early with a helpful message if nothing is prepared
-  const existing = await runningServer(dir);
-  if (existing) {
-    console.log(c.dim('  (already running; the open page refreshes by itself)'));
-    printRunning(dir, existing.url, true);
-    if (!args['no-open']) openBrowser(existing.url);
-    return;
+async function startHubInBackground(args) {
+  const child = spawn(process.execPath, [__filename, '__hub', ...(args.port ? ['--port', String(args.port)] : [])], {
+    detached: true, stdio: 'ignore', windowsHide: true, cwd: os.homedir(),
+  });
+  child.unref();
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    const info = await hub.running();
+    if (info) return info;
   }
+  throw new Error('The diffdeck server did not start. Run `diffdeck serve --foreground` to see the error.');
+}
 
-  if (args.background) {
-    const child = spawn(process.execPath, [__filename, 'serve', '--no-open', ...(args.port ? ['--port', String(args.port)] : [])], {
-      cwd: path.dirname(dir), detached: true, stdio: 'ignore', windowsHide: true,
-    });
-    child.unref();
-    for (let i = 0; i < 50; i++) {
-      await new Promise((r) => setTimeout(r, 100));
-      const info = await runningServer(dir);
-      if (info && info.pid === child.pid) {
-        printRunning(dir, info.url, true);
-        if (!args['no-open']) openBrowser(info.url);
-        return;
-      }
-    }
-    throw new Error('The background server did not start. Run `diffdeck serve` to see the error.');
-  }
-
+async function runHub(args) {
   let port = Number(args.port || process.env.DIFFDECK_PORT || 4777);
   let server;
   for (let attempt = 0; attempt < 20; attempt++) {
-    try { server = await serve(dir, port); break; } catch (e) {
+    try { server = await listen(port); break; } catch (e) {
       if (e.code !== 'EADDRINUSE' || args.port) throw e;
       port++;
     }
   }
-  const url = `http://127.0.0.1:${port}/`;
-  fs.writeFileSync(serverFile(dir), JSON.stringify({ pid: process.pid, port, url, startedAt: new Date().toISOString() }, null, 2));
-  const cleanup = () => {
-    try { if (JSON.parse(fs.readFileSync(serverFile(dir), 'utf8')).pid === process.pid) fs.unlinkSync(serverFile(dir)); } catch { /* already gone */ }
-  };
-  printRunning(dir, url, false);
-  if (!args['no-open']) openBrowser(url);
+  const info = { pid: process.pid, port, url: `http://127.0.0.1:${port}/`, version, startedAt: new Date().toISOString() };
+  hub.writeHubInfo(info);
+  const cleanup = () => hub.clearHubInfo(process.pid);
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { cleanup(); server.close(); process.exit(0); });
   process.on('exit', cleanup);
+  return info;
 }
 
-async function doStop(dir) {
-  const info = await runningServer(dir);
-  if (!info) { try { fs.unlinkSync(serverFile(dir)); } catch { /* none */ } console.log('No diffdeck server is running for this repository.'); return; }
-  process.kill(info.pid, 'SIGTERM');
-  console.log(`${c.green('✓')} Stopped the diffdeck server at ${info.url}`);
+// diffdeck 0.2.0 ran one server per repository, recorded in .diffdeck/server.json.
+function stopLegacyServer(dir) {
+  const file = path.join(dir, 'server.json');
+  try {
+    const { pid } = JSON.parse(fs.readFileSync(file, 'utf8'));
+    try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+    fs.unlinkSync(file);
+  } catch { /* none */ }
+}
+
+async function doServe(dir, args, preferredSlug) {
+  load(dir); // fail early with a helpful message if nothing is prepared
+  stopLegacyServer(dir);
+  const slug = hub.register(path.dirname(dir), preferredSlug);
+  let info = await hub.running();
+  if (info && info.version !== version) {
+    console.log(c.dim(`  restarting the diffdeck server (${info.version} → ${version})`));
+    try { process.kill(info.pid, 'SIGTERM'); } catch { /* already gone */ }
+    await new Promise((r) => setTimeout(r, 300));
+    info = null;
+  }
+  if (!info && args.foreground) {
+    info = await runHub(args);
+    printRunning(dir, `${info.url}${slug}/`);
+    console.log(c.dim('  Running in the foreground. Press Ctrl+C to stop the server for all repositories.'));
+    if (!args['no-open']) openBrowser(`${info.url}${slug}/`);
+    return;
+  }
+  if (!info) info = await startHubInBackground(args);
+  const url = `${info.url}${slug}/`;
+  printRunning(dir, url);
+  if (!args['no-open']) openBrowser(url);
+}
+
+async function doStop(root, args) {
+  const info = await hub.running();
+  if (args.all) {
+    if (!info) { console.log('The diffdeck server is not running.'); return; }
+    process.kill(info.pid, 'SIGTERM');
+    console.log(`${c.green('✓')} Stopped the diffdeck server at ${info.url} (all reviews).`);
+    return;
+  }
+  const slug = hub.unregister(root);
+  if (!slug) console.log('This repository is not on the diffdeck server.');
+  else console.log(`${c.green('✓')} Removed ${c.b(`/${slug}/`)} from the diffdeck server.`);
+  const left = Object.keys(hub.repos()).length;
+  if (info && left === 0) {
+    process.kill(info.pid, 'SIGTERM');
+    console.log(c.dim('  No reviews left, so the server was stopped.'));
+  } else if (info && slug) {
+    console.log(c.dim(`  ${left} other review${left === 1 ? '' : 's'} still at ${info.url}`));
+  }
+}
+
+async function doList() {
+  const info = await hub.running();
+  const all = hub.repos();
+  const slugs = Object.keys(all);
+  if (!slugs.length) { console.log('No repositories registered. Run `diffdeck` in a repository.'); return; }
+  console.log(info ? `${c.green('●')} Server running at ${c.b(info.url)}` : `${c.yellow('○')} Server not running (it starts with \`diffdeck\` in any repository).`);
+  const width = Math.max(...slugs.map((s) => s.length)) + 2;
+  for (const slug of slugs) {
+    const where = info ? `${info.url}${slug}/` : `/${slug}/`;
+    console.log(`  ${slug.padEnd(width)} ${c.blue(where)}  ${c.dim(all[slug].root)}`);
+  }
 }
 
 /* ---------------- upgrade ---------------- */
@@ -212,7 +251,7 @@ async function doUpgrade(args) {
     console.log(`${c.green('✓')} diffdeck ${version} is the latest version.${latest !== version ? c.dim(` (GitHub has ${latest})`) : ''}`);
     return;
   }
-  console.log(`Upgrading diffdeck ${version} → ${latest}…`);
+  console.log(newer(latest, version) ? `Upgrading diffdeck ${version} → ${latest}…` : `Reinstalling diffdeck (installed ${version}, GitHub has ${latest})…`);
 
   let code;
   if (via === 'clone') {
@@ -227,24 +266,27 @@ async function doUpgrade(args) {
   console.log(`${c.green('✓')} diffdeck is now ${installed}.`);
 
   // Refresh this repository's agent commands and restart its server so both use the new version.
-  let root;
-  try { root = repoRoot(process.cwd()); } catch { return; }
   const bin = path.join(PKG_ROOT, 'bin', 'diffdeck.js');
-  const targets = [['claude', '.claude/commands'], ['cursor', '.cursor/commands'], ['opencode', '.opencode/command']]
-    .filter(([, d]) => fs.existsSync(path.join(root, d, 'diffdeck-breakdown.md'))).map(([t]) => t);
-  if (targets.length) {
+  let root = null;
+  try { root = repoRoot(process.cwd()); } catch { /* not in a repository */ }
+  const targets = root ? [['claude', '.claude/commands'], ['cursor', '.cursor/commands'], ['opencode', '.opencode/command']]
+    .filter(([, d]) => fs.existsSync(path.join(root, d, 'diffdeck-breakdown.md'))).map(([t]) => t) : [];
+  if (root && targets.length) {
     await runInherit(process.execPath, [bin, 'init', targets.join(','), '--quiet'], { cwd: root });
   }
-  if (await runningServer(workDir(root))) {
-    await runInherit(process.execPath, [bin, 'stop'], { cwd: root });
-    await runInherit(process.execPath, [bin, 'serve', '--background', '--no-open'], { cwd: root });
+  const running = await hub.running();
+  if (running) {
+    try { process.kill(running.pid, 'SIGTERM'); } catch { /* gone */ }
+    await new Promise((r) => setTimeout(r, 300));
+    spawn(process.execPath, [bin, '__hub', '--port', String(running.port)], { detached: true, stdio: 'ignore', cwd: os.homedir() }).unref();
+    console.log(`${c.green('✓')} Restarted the diffdeck server on the new version; all reviews keep their addresses.`);
   }
 }
 
 async function main() {
   const argv = process.argv.slice(2);
   const first = argv[0];
-  const known = ['review', 'demo', 'init', 'agent-setup', 'prepare', 'serve', 'stop', 'validate', 'feedback', 'post', 'login', 'upgrade', 'help'];
+  const known = ['review', 'demo', 'init', 'agent-setup', 'prepare', 'serve', 'stop', 'list', 'validate', 'feedback', 'post', 'login', 'upgrade', 'help', '__hub'];
   const cmd = !first || first.startsWith('-') ? 'review' : first;
   const args = parseArgs(cmd === first ? argv.slice(1) : argv);
 
@@ -254,12 +296,15 @@ async function main() {
   if (!known.includes(cmd)) { process.stderr.write(`Unknown command "${cmd}".\n\n${HELP}`); process.exitCode = 2; return; }
 
   if (cmd === 'upgrade') { await doUpgrade(args); return; }
+  if (cmd === '__hub') { await runHub(args); return; }
+  if (cmd === 'list') { await doList(); return; }
+  if (cmd === 'stop' && args.all) { await doStop(null, args); return; }
 
   if (cmd === 'demo') {
     const { createDemo } = require('../lib/demo');
     const root = createDemo();
     console.log(`${c.green('✓')} Demo repository created at ${c.dim(root)}`);
-    await doServe(workDir(root), args);
+    await doServe(workDir(root), args, 'demo');
     return;
   }
 
@@ -279,7 +324,7 @@ async function main() {
       await doServe(dir, args);
       return;
     case 'stop':
-      await doStop(dir);
+      await doStop(root, args);
       return;
     case 'validate': {
       const r = load(dir);

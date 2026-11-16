@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const os = require('os');
-const { repoRoot, workDir, prepare, defaultBase } = require('../lib/source');
+const { repoRoot, workDir, prepare, defaultBase, resolveTarget } = require('../lib/source');
 const { load } = require('../lib/breakdown');
 const { listen } = require('../lib/server');
 const hub = require('../lib/hub');
@@ -20,9 +20,12 @@ const HELP = `${c.b('diffdeck')} ${c.dim(`v${version}`)} — review a diff or PR
 
 ${c.b('Usage')}
   diffdeck                      Open this repository's review (the prepared PR, or this branch vs main)
-  diffdeck review <base>        Review against a branch, e.g. ${c.blue('diffdeck review develop')}
-  diffdeck review <PR link>     Review a GitHub pull request, e.g. https://github.com/org/repo/pull/42
-  diffdeck review --pr <n|link> Same, by number or link (needs the gh CLI)
+  diffdeck review <target>      Review a PR link, a branch (vs main) or a commit (vs its parent):
+                                  diffdeck review https://github.com/org/repo/pull/42
+                                  diffdeck review feature/login
+                                  diffdeck review a1b2c3d
+  diffdeck review --pr <n|link> | --branch <name> [--base <branch>] | --commit <id>
+                                Say explicitly what the target is; --base changes what a branch is compared with
   diffdeck review --staged      Review staged changes
   diffdeck review --worktree    Review uncommitted changes against HEAD
   diffdeck demo                 Open a sample review, no setup needed
@@ -47,7 +50,7 @@ ${c.b('Options')}
   -v, --version  Print the version
 
 ${c.b('Workflow')}
-  1. In your agent:  /diffdeck-breakdown <PR link>   ${c.dim('(the agent asks for the link if you leave it out)')}
+  1. In your agent:  /diffdeck-breakdown <PR link | branch | commit>   ${c.dim('(the agent asks if you leave it out)')}
   2. In a terminal:  diffdeck                 ${c.dim('(explore the diagram, comment, pick alternatives)')}
   3. In your agent:  /diffdeck-apply          ${c.dim('(or: "implement .diffdeck/feedback.md")')}
      or on GitHub:   Finish review → Post on GitHub  ${c.dim('(or: diffdeck post)')}
@@ -57,7 +60,7 @@ function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--pr' || a === '--port' || a === '--event') args[a.slice(2)] = argv[i + 1] === undefined || argv[i + 1].startsWith('--') ? true : argv[++i];
+    if (['--pr', '--port', '--event', '--branch', '--commit', '--base'].includes(a)) args[a.slice(2)] = argv[i + 1] === undefined || argv[i + 1].startsWith('--') ? true : argv[++i];
     else if (a.startsWith('--')) args[a.slice(2)] = true;
     else args._.push(a);
   }
@@ -65,32 +68,47 @@ function parseArgs(argv) {
 }
 
 function openBrowser(url) {
+  if (process.env.DIFFDECK_NO_OPEN) return;
   const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const argv = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
   try { spawn(cmd, argv, { stdio: 'ignore', detached: true }).on('error', () => {}).unref(); } catch { /* ignore */ }
 }
 
-const PR_URL = /^(https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+\/pull\/\d+)(?:\/[\w-]+)*\/?(?:[#?].*)?$/;
-const prLink = (v) => { const m = PR_URL.exec(v); return m ? m[1] : v; }; // strip /files, /commits, #fragment
 
+function flagValue(args, name, example) {
+  const v = args[name];
+  if (v === true || v === '') throw new Error(`--${name} needs a value, e.g. --${name} ${example}`);
+  return v;
+}
+
+// What to review: a PR, a branch (vs main) or a commit (vs its parent).
+// A single positional argument is detected automatically.
 function sourceOpts(root, args) {
-  const first = args._[0];
-  if (first && PR_URL.test(first)) return { pr: prLink(first) };
-  if (first && /^https?:\/\//.test(first)) throw new Error(`"${first}" is not a pull request link. It should look like https://github.com/org/repo/pull/42`);
+  const base = args.base !== undefined ? flagValue(args, 'base', 'main') : undefined;
   if (args.pr !== undefined) {
-    if (args.pr === true || !(/^\d+$/.test(args.pr) || PR_URL.test(args.pr))) throw new Error('--pr expects a PR number or link, e.g. --pr 42 or --pr https://github.com/org/repo/pull/42');
-    return { pr: prLink(args.pr) };
+    const pr = flagValue(args, 'pr', '42');
+    const t = resolveTarget(root, /^\d+$/.test(pr) ? `#${pr}` : pr);
+    if (!t.pr) throw new Error('--pr expects a PR number or link, e.g. --pr 42 or --pr https://github.com/org/repo/pull/42');
+    return t;
   }
+  if (args.branch !== undefined) return { branch: flagValue(args, 'branch', 'feature/login'), base };
+  if (args.commit !== undefined) return { commit: flagValue(args, 'commit', 'a1b2c3d') };
   if (args.staged) return { staged: true };
   if (args.worktree) return {};
-  if (first) return { base: first };
-  // With no arguments, keep reviewing the PR an agent already prepared.
+  if (args._[0]) {
+    const t = resolveTarget(root, args._[0]);
+    return t.branch ? { ...t, base } : t;
+  }
+  if (base) return { base };
+  // With no arguments, keep reviewing what was prepared before (PR, branch or commit).
   try {
     const { meta } = JSON.parse(fs.readFileSync(path.join(workDir(root), 'diff.json'), 'utf8'));
     if (meta.source === 'pr' && (meta.prUrl || meta.prNumber)) return { pr: String(meta.prUrl || meta.prNumber) };
+    if (meta.source === 'branch' && meta.target) return { branch: meta.target.branch, base: meta.target.base || undefined };
+    if (meta.source === 'commit' && meta.target) return { commit: meta.target.commit };
   } catch { /* nothing prepared yet */ }
-  const base = defaultBase(root);
-  return base ? { base } : {};
+  const auto = defaultBase(root);
+  return auto ? { base: auto } : {};
 }
 
 function doPrepare(root, args) {

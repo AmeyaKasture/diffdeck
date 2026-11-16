@@ -60,22 +60,33 @@ This adds two slash commands for Claude Code, Cursor and OpenCode:
 
 | Command | What it does |
 |---|---|
-| `/diffdeck-breakdown <PR link>` | The agent analyses the pull request and opens the review |
+| `/diffdeck-breakdown <PR link \| branch \| commit>` | The agent analyses the change and opens the review |
 | `/diffdeck-apply` | The agent implements the feedback you leave in the review |
 
 The command files go to `.claude/commands/`, `.cursor/commands/` and `.opencode/command/`.
 Commit them if your team should have the commands too. For other agents (Codex, Aider, …),
 `diffdeck init` prints a short snippet to paste into `AGENTS.md`.
 
-### 3. Break down a pull request (in your agent)
+### 3. Break down a change (in your agent)
+
+Give the agent a pull request, a branch or a commit. The workflow is the same for all three:
 
 ```
-/diffdeck-breakdown https://github.com/your-org/your-repo/pull/42
+/diffdeck-breakdown https://github.com/your-org/your-repo/pull/42    # a pull request
+/diffdeck-breakdown feature/login                                    # a branch, compared against main
+/diffdeck-breakdown a1b2c3d                                          # a commit, compared with the commit before it
 ```
+
+| You give | diffdeck compares | Notes |
+|---|---|---|
+| PR link or number | the PR's diff, exactly as GitHub shows it | Needs the `gh` CLI |
+| Branch name | the branch against `main` (or `master`) from the point where it forked, like a PR | It doesn't need to be checked out. If it exists only on the remote, it is fetched. If it is your current branch, uncommitted edits are included. Use `--base <branch>` to compare against something else |
+| Commit id | that commit against its parent, to show what this one commit changed | For a merge commit, the first parent. For the very first commit, an empty tree |
 
 The agent then:
 
-1. fetches the PR's diff (`diffdeck prepare --pr <link>`)
+1. collects the diff (`diffdeck prepare <what you gave>`); diffdeck detects whether it is a PR,
+   a branch or a commit and says which one it used
 2. reads the diff and the surrounding code, and writes the breakdown: a system diagram,
    change cards, logic flowcharts, and the design decisions with their alternatives
 3. checks its own work with `diffdeck validate`
@@ -93,7 +104,7 @@ The review is open at http://127.0.0.1:4777/agentic-cloud/ (all reviews: http://
 `http://127.0.0.1:4777/` lists every review with its progress. If two different repositories
 share a folder name, the second one gets `-2`, as in `/api/` and `/api-2/`.
 
-If you leave out the link, the agent asks for it before doing anything. If the PR belongs to
+If you give nothing, the agent asks what to break down before doing anything. If a PR belongs to
 another repository, the agent runs from your local clone of that repository.
 
 ### 4. Review in the browser, then choose one of two buttons
@@ -112,8 +123,8 @@ When you are done, use one of the two buttons at the top right:
 | Command | When to use it |
 |---|---|
 | `diffdeck` | Reopen this repository's review at `http://127.0.0.1:4777/<repository-name>/`. It keeps reviewing the PR that was prepared, and starts the server only if it is not running |
-| `diffdeck review <PR link>` | Review a different PR yourself, without an agent. The diagram shows changed files until a breakdown exists |
-| `diffdeck review main` | Review your current branch against `main` instead of a PR |
+| `diffdeck review <PR link \| branch \| commit>` | Review something else yourself, without an agent. The diagram shows changed files until a breakdown exists |
+| `diffdeck review --base develop` | Review your current branch against `develop` instead of `main` |
 | `diffdeck list` | Show every repository on the server and its address |
 | `diffdeck stop` | Remove this repository's review from the server (the others keep running) |
 | `diffdeck stop --all` | Stop the server and every review on it |
@@ -123,7 +134,7 @@ When you are done, use one of the two buttons at the top right:
 
 The [command reference](#command-reference) lists every command and option.
 
-> **Agent without slash commands?** For step 3, tell it: *"Run `diffdeck prepare --pr <PR link>`,
+> **Agent without slash commands?** For step 3, tell it: *"Run `diffdeck prepare <PR link, branch or commit>`,
 > then follow `.diffdeck/AGENT_TASK.md`."* After the review, tell it: *"Implement `.diffdeck/feedback.md`."*
 > Everything passes through plain files, so any agent can take part.
 
@@ -220,10 +231,12 @@ Files: `src/client.js`
 
 | Command | What it does |
 |---|---|
-| `diffdeck` | Reviews the PR prepared earlier; if there is none, reviews the current branch against `main`/`master` (auto-detected; uncommitted edits included). Opens the browser |
-| `diffdeck review <PR link>` | Reviews a GitHub pull request (requires the [`gh`](https://cli.github.com) CLI) |
-| `diffdeck review <base>` | Reviews against another branch, e.g. `diffdeck review develop` |
-| `diffdeck review --pr 42` | The same, by PR number in the current repository |
+| `diffdeck` | Reviews whatever was prepared earlier (PR, branch or commit); if nothing was, the current branch against `main`/`master` (auto-detected; uncommitted edits included). Opens the browser |
+| `diffdeck review <target>` | Reviews a PR link or number, a branch (against `main`) or a commit (against its parent); the kind is detected automatically |
+| `diffdeck review --pr <n\|link>` | Reviews a GitHub pull request (requires the [`gh`](https://cli.github.com) CLI) |
+| `diffdeck review --branch <name> [--base <branch>]` | Reviews a branch against `main`, or against `--base` |
+| `diffdeck review --commit <id>` | Reviews one commit against its parent |
+| `diffdeck review --base <branch>` | Reviews the current branch against another base branch |
 | `diffdeck review --staged` | Reviews only staged changes |
 | `diffdeck review --worktree` | Reviews uncommitted changes against `HEAD` |
 | `diffdeck demo` | Opens the sample review |
@@ -254,17 +267,17 @@ references would no longer match.
 
 | Agent | Setup | Step 1 | Step 3 |
 |---|---|---|---|
-| Claude Code | `diffdeck init claude` (writes `.claude/commands/`) | `/diffdeck-breakdown <PR link>` | `/diffdeck-apply` |
-| Cursor | `diffdeck init cursor` (writes `.cursor/commands/`) | `/diffdeck-breakdown <PR link>` | `/diffdeck-apply` |
-| OpenCode | `diffdeck init opencode` (writes `.opencode/command/`) | `/diffdeck-breakdown <PR link>` | `/diffdeck-apply` |
-| Anything else | add the snippet `diffdeck init` prints to `AGENTS.md` | "run `diffdeck prepare --pr <PR link>`, then follow `.diffdeck/AGENT_TASK.md`" | "implement `.diffdeck/feedback.md`" |
+| Claude Code | `diffdeck init claude` (writes `.claude/commands/`) | `/diffdeck-breakdown <PR, branch or commit>` | `/diffdeck-apply` |
+| Cursor | `diffdeck init cursor` (writes `.cursor/commands/`) | `/diffdeck-breakdown <PR, branch or commit>` | `/diffdeck-apply` |
+| OpenCode | `diffdeck init opencode` (writes `.opencode/command/`) | `/diffdeck-breakdown <PR, branch or commit>` | `/diffdeck-apply` |
+| Anything else | add the snippet `diffdeck init` prints to `AGENTS.md` | "run `diffdeck prepare <PR link, branch or commit>`, then follow `.diffdeck/AGENT_TASK.md`" | "implement `.diffdeck/feedback.md`" |
 
-`/diffdeck-breakdown` needs a pull request link. Without one, the agent asks for it first.
+`/diffdeck-breakdown` takes a PR link, a branch name or a commit id. Without one, the agent asks first.
 
 ## How it works
 
 ```
-  gh pr diff <PR link>  (or git diff)
+  PR (gh pr diff), branch (vs main) or commit (vs parent)
           |
           v
   diffdeck prepare  -->  .diffdeck/diff.patch, hunks.md, AGENT_TASK.md, breakdown.schema.json

@@ -4,13 +4,10 @@
 
 **See a pull request instead of reading it.**
 
-diffdeck turns a git diff or GitHub PR into an interactive flow diagram.
-Click any part to see its logic as a flowchart, jump to the exact lines of code,
-compare the design alternatives with their pros and cons, then either hand your
-feedback to **any coding agent** (Claude Code, Cursor, OpenCode, Codex, Aider, …)
-or **post it as a review on the GitHub pull request**.
+Turn a pull request, a branch or a single commit into an interactive flow diagram,
+review it visually, and send your feedback to a coding agent or to GitHub.
 
-Runs entirely on your machine · zero dependencies · Node 18+
+Runs on your machine. No dependencies. Node 18+.
 
 <br>
 
@@ -20,188 +17,375 @@ Runs entirely on your machine · zero dependencies · Node 18+
 
 ---
 
-## How to use it
+## Contents
 
-A review takes four commands. Steps 2 and 4 run in your coding agent; the rest run in a terminal.
+- [What it does](#what-it-does)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [1. Set up a repository](#1-set-up-a-repository)
+  - [2. Break down a change](#2-break-down-a-change)
+  - [3. Review in the browser](#3-review-in-the-browser)
+  - [4. Finish the review](#4-finish-the-review)
+  - [Reviewing several repositories](#reviewing-several-repositories)
+- [Commands](#commands)
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Help](#help)
+- [FAQ](#faq)
+- [Development](#development)
 
-### 1. Install (once per machine)
+---
+
+## What it does
+
+- **Breaks down a change** (a PR, a branch or a commit) into cards grouped by intent, with the help of your coding agent
+- **Draws a system flow diagram** of the parts the change touches, with added, changed and removed parts in different colors
+- **Draws a logic flowchart** for each change; click a step to see its exact lines of code
+- **Shows the design decisions** behind the change, with alternatives and their pros and cons
+- **Collects your feedback**: line notes, approvals, requested changes and preferred alternatives
+- **Finishes in one click**: hand the feedback to your agent to implement, or post it on the pull request as a GitHub review
+
+Works with Claude Code, Cursor and OpenCode out of the box, and with any other agent (Codex, Aider, ...) through plain files.
+
+## Requirements
+
+- **Node.js 18 or newer** and **git**
+- **GitHub CLI (`gh`)**, only for pull requests and for posting reviews:
+
+  ```sh
+  brew install gh                      # macOS
+  winget install --id GitHub.cli       # Windows
+  ```
+
+  Linux: see [cli.github.com](https://github.com/cli/cli#installation).
+
+## Quick start
+
+```sh
+# 1. Install (once per machine)
+npm install -g github:AmeyaKasture/diffdeck
+
+# 2. Set up your repository (once per repository)
+cd your-repo
+diffdeck init
+```
+
+```
+# 3. In your coding agent, break down a change
+/diffdeck-breakdown https://github.com/your-org/your-repo/pull/42
+```
+
+The agent analyses the change and opens the review in your browser. Review it, then click
+**Hand off to agent** (and run `/diffdeck-apply`) or **Post on GitHub**.
+
+Just want a look? Open a finished sample review, with nothing to install:
+
+```sh
+npx github:AmeyaKasture/diffdeck demo
+```
+
+---
+
+## Installation
+
+**Install**
 
 ```sh
 npm install -g github:AmeyaKasture/diffdeck
 diffdeck --version
 ```
 
-Already installed? Update with:
+**Upgrade**
 
 ```sh
-diffdeck upgrade
+diffdeck upgrade              # install the latest version, if there is one
+diffdeck upgrade --force      # reinstall even if you are up to date
 ```
 
-`upgrade` checks GitHub for a newer version and installs it. It also refreshes the slash
-commands in the repository you run it from, and restarts the review server if
-one is running. Use `--force` to reinstall the same version. Versions before 0.2.0 have no
-`upgrade` command, so update those once with `npm install -g github:AmeyaKasture/diffdeck`.
+`upgrade` also refreshes the slash commands in the repository you run it from, and restarts the
+review server so it runs the new version. Your reviews keep their addresses.
 
-Requires Node 18+ and git. To review GitHub pull requests, you also need the
-[GitHub CLI](https://cli.github.com) (`brew install gh`, `winget install --id GitHub.cli`).
-If you are not logged in to it, `diffdeck login` takes care of that.
+> Versions before 0.2.0 have no `upgrade` command. Update those once with
+> `npm install -g github:AmeyaKasture/diffdeck`.
 
-Want a look first? `npx github:AmeyaKasture/diffdeck demo` opens a finished sample review,
-with nothing to install and no agent needed.
+**Uninstall**
 
-### 2. Set up a repository (once per repository)
+```sh
+diffdeck stop --all           # stop the review server
+npm uninstall -g diffdeck
+rm -rf ~/.diffdeck            # list of reviewed repositories
+```
+
+Each repository you reviewed also has a `.diffdeck/` folder, which you can delete.
+
+---
+
+## Usage
+
+A review has four steps:
+
+| Step | Where | What you do |
+|---|---|---|
+| 1 | terminal | `diffdeck init` (once per repository) |
+| 2 | your agent | `/diffdeck-breakdown <PR link, branch or commit>` |
+| 3 | browser | explore, comment, approve, pick alternatives |
+| 4 | browser, then agent | **Hand off to agent** and run `/diffdeck-apply`, or **Post on GitHub** |
+
+### 1. Set up a repository
 
 ```sh
 cd your-repo
-diffdeck init
+diffdeck init                 # all supported agents
+diffdeck init claude          # or only one: claude, cursor or opencode
 ```
 
-This adds two slash commands for Claude Code, Cursor and OpenCode:
+This adds two slash commands:
 
-| Command | What it does |
-|---|---|
-| `/diffdeck-breakdown <PR link \| branch \| commit>` | The agent analyses the change and opens the review |
-| `/diffdeck-apply` | The agent implements the feedback you leave in the review |
+- `/diffdeck-breakdown` analyses a change and opens the review
+- `/diffdeck-apply` implements the feedback you leave in the review
 
-The command files go to `.claude/commands/`, `.cursor/commands/` and `.opencode/command/`.
-Commit them if your team should have the commands too. For other agents (Codex, Aider, …),
-`diffdeck init` prints a short snippet to paste into `AGENTS.md`.
+The files are written to:
 
-### 3. Break down a change (in your agent)
+- `.claude/commands/` for Claude Code
+- `.cursor/commands/` for Cursor
+- `.opencode/command/` for OpenCode
 
-Give the agent a pull request, a branch or a commit. The workflow is the same for all three:
+Commit them if your team should have the commands too. For any other agent, `diffdeck init`
+prints a short snippet to paste into `AGENTS.md`.
+
+### 2. Break down a change
+
+Give the agent a pull request, a branch or a commit:
 
 ```
-/diffdeck-breakdown https://github.com/your-org/your-repo/pull/42    # a pull request
-/diffdeck-breakdown feature/login                                    # a branch, compared against main
-/diffdeck-breakdown a1b2c3d                                          # a commit, compared with the commit before it
+/diffdeck-breakdown https://github.com/your-org/your-repo/pull/42
+/diffdeck-breakdown 42
+/diffdeck-breakdown feature/login
+/diffdeck-breakdown a1b2c3d
 ```
 
-| You give | diffdeck compares | Notes |
-|---|---|---|
-| PR link or number | the PR's diff, exactly as GitHub shows it | Needs the `gh` CLI |
-| Branch name | the branch against `main` (or `master`) from the point where it forked, like a PR | It doesn't need to be checked out. If it exists only on the remote, it is fetched. If it is your current branch, uncommitted edits are included. Use `--base <branch>` to compare against something else |
-| Commit id | that commit against its parent, to show what this one commit changed | For a merge commit, the first parent. For the very first commit, an empty tree |
+diffdeck works out which kind you gave it:
+
+- **Pull request** (link or number): the PR's diff, exactly as GitHub shows it. Needs `gh`.
+- **Branch**: the branch compared with `main` (or `master`) from where it forked, like a PR.
+  - It does not need to be checked out.
+  - If it exists only on the remote, it is fetched.
+  - If it is your current branch, uncommitted edits are included.
+- **Commit**: that commit compared with the one before it, to show what this commit changed.
+  - For a merge commit, it is compared with its first parent.
+  - The very first commit of a repository is compared with an empty tree.
+
+If you give nothing, the agent asks what to break down before doing anything.
 
 The agent then:
 
-1. collects the diff (`diffdeck prepare <what you gave>`); diffdeck detects whether it is a PR,
-   a branch or a commit and says which one it used
-2. reads the diff and the surrounding code, and writes the breakdown: a system diagram,
-   change cards, logic flowcharts, and the design decisions with their alternatives
-3. checks its own work with `diffdeck validate`
-4. adds the repository to the review server and opens your browser (`diffdeck serve`)
+1. collects the diff with `diffdeck prepare`
+2. reads the diff and the surrounding code
+3. writes the breakdown: system diagram, change cards, logic flowcharts and design decisions
+4. checks its work with `diffdeck validate`
+5. opens the review with `diffdeck serve`
 
-It finishes with the link and its main findings:
+It finishes with the review's address and its main findings:
 
 ```
-The review is open at http://127.0.0.1:4777/agentic-cloud/ (all reviews: http://127.0.0.1:4777/).
+The review is open at http://127.0.0.1:4777/your-repo/ (all reviews: http://127.0.0.1:4777/).
 ```
 
-**Each repository gets its own address.** One background server hosts all your reviews, at
-`http://127.0.0.1:4777/<repository-name>/`. Breaking down a PR in a second repository adds
-`/<second-name>/` next to the first, so there is nothing to stop or restart.
-`http://127.0.0.1:4777/` lists every review with its progress. If two different repositories
-share a folder name, the second one gets `-2`, as in `/api/` and `/api-2/`.
+### 3. Review in the browser
 
-If you give nothing, the agent asks what to break down before doing anything. If a PR belongs to
-another repository, the agent runs from your local clone of that repository.
+- **Flow diagram** (home screen): hover a node to trace its connections; click it to open that change
+- **Walk through**: steps through the changes in the suggested reading order
+- **Logic flow**: click a step to jump to its code; click a decision diamond to compare alternatives
+- **Code diff**: click a line number to leave a note on that line
+- **Prefer this approach**: asks for a different design alternative
+- **Approve** or **Request changes** on each card
+- **Cards** view: the same changes as a list
 
-### 4. Review in the browser, then choose one of two buttons
+Everything is saved as you go, to `.diffdeck/feedback.md`.
 
-Explore the diagram, open changes, read the flowcharts and code, leave notes on lines,
-prefer alternatives, and approve or request changes per card. Everything saves as you go.
-When you are done, use one of the two buttons at the top right:
+### 4. Finish the review
 
-| Button | What happens |
+Use one of the two buttons at the top right of the page.
+
+**Hand off to agent.** Then, in your agent:
+
+```
+/diffdeck-apply
+```
+
+The agent implements every requested change and leaves approved cards untouched.
+
+**Post on GitHub.** Your notes become a review on the pull request:
+
+- line notes become inline comments
+- design decisions and card notes form the summary
+- you choose **Comment**, **Request changes** or **Approve**
+- you see a preview and confirm before anything is posted
+
+The same from the terminal:
+
+```sh
+diffdeck login                                # once, if gh is not logged in
+diffdeck post                                 # preview; nothing is sent
+diffdeck post --yes                           # post it
+diffdeck post --yes --event request-changes   # choose the review type
+```
+
+### Reviewing several repositories
+
+One background server hosts all your reviews, each at its own address:
+
+```
+http://127.0.0.1:4777/                  all reviews, with their progress
+http://127.0.0.1:4777/agentic-cloud/    one repository's review
+http://127.0.0.1:4777/diffdeck/         another repository's review
+```
+
+- Running `diffdeck` in another repository adds it next to the others. Nothing is stopped or replaced.
+- If two different repositories share a folder name, the second gets `-2` (for example `/api/` and `/api-2/`).
+- Each repository has one review at a time. Breaking down something else in the same repository replaces it.
+
+```sh
+diffdeck list                 # every review and its address
+diffdeck stop                 # remove this repository's review
+diffdeck stop --all           # stop the server and every review
+```
+
+---
+
+## Commands
+
+Run `diffdeck --help` for the same list in your terminal.
+
+### Review
+
+| Command | What it does |
 |---|---|
-| **Hand off to agent** | Your feedback is in `.diffdeck/feedback.md`. Run `/diffdeck-apply` in your agent, and it implements the requested changes while leaving approved cards untouched |
-| **Post on GitHub** | Your notes are published on the PR as a review: line notes become inline comments, and decisions and card notes form the summary. You preview it, choose *Comment*, *Request changes* or *Approve*, and confirm before anything is posted |
+| `diffdeck` | Open this repository's review. Reuses whatever was prepared (PR, branch or commit); if nothing was, reviews the current branch against `main` |
+| `diffdeck review <target>` | Review a PR link or number, a branch or a commit. The kind is detected automatically |
+| `diffdeck review --pr <number or link>` | Review a pull request |
+| `diffdeck review --branch <name>` | Review a branch against `main` |
+| `diffdeck review --branch <name> --base <branch>` | Review a branch against another base branch |
+| `diffdeck review --commit <id>` | Review one commit against its parent |
+| `diffdeck review --base <branch>` | Review the current branch against another base branch |
+| `diffdeck review --staged` | Review staged changes only |
+| `diffdeck review --worktree` | Review uncommitted changes against `HEAD` |
+| `diffdeck demo` | Open a finished sample review |
 
-### Everyday commands
+Examples:
 
-| Command | When to use it |
+```sh
+diffdeck review https://github.com/your-org/your-repo/pull/42
+diffdeck review feature/login
+diffdeck review feature/login --base develop
+diffdeck review a1b2c3d
+```
+
+### Server
+
+| Command | What it does |
 |---|---|
-| `diffdeck` | Reopen this repository's review at `http://127.0.0.1:4777/<repository-name>/`. It keeps reviewing the PR that was prepared, and starts the server only if it is not running |
-| `diffdeck review <PR link \| branch \| commit>` | Review something else yourself, without an agent. The diagram shows changed files until a breakdown exists |
-| `diffdeck review --base develop` | Review your current branch against `develop` instead of `main` |
-| `diffdeck list` | Show every repository on the server and its address |
-| `diffdeck stop` | Remove this repository's review from the server (the others keep running) |
+| `diffdeck serve` | Open this repository's review without collecting the diff again. Starts the server if needed |
+| `diffdeck serve --foreground` | Run the server in this terminal (Ctrl+C stops it); useful for debugging |
+| `diffdeck list` | Show every review on the server and its address |
+| `diffdeck stop` | Remove this repository's review; the server stops when none are left |
 | `diffdeck stop --all` | Stop the server and every review on it |
-| `diffdeck post` / `diffdeck post --yes` | Preview, then publish, the GitHub review from the terminal |
-| `diffdeck login` | Log in to GitHub through `gh` |
-| `diffdeck upgrade` | Update diffdeck to the latest version |
 
-The [command reference](#command-reference) lists every command and option.
+### GitHub
 
-> **Agent without slash commands?** For step 3, tell it: *"Run `diffdeck prepare <PR link, branch or commit>`,
-> then follow `.diffdeck/AGENT_TASK.md`."* After the review, tell it: *"Implement `.diffdeck/feedback.md`."*
-> Everything passes through plain files, so any agent can take part.
+| Command | What it does |
+|---|---|
+| `diffdeck login` | Log in to GitHub through `gh` (opens a browser login) |
+| `diffdeck post` | Preview the GitHub review; nothing is sent |
+| `diffdeck post --yes` | Post the review |
+| `diffdeck post --yes --event <type>` | Choose `comment`, `request-changes` or `approve` |
+| `diffdeck post --yes --force` | Post again even if the same review was already posted |
 
-## What you get
+### Agents
 
-### 1. A system flow diagram of the change
+| Command | What it does |
+|---|---|
+| `diffdeck init` | Add `/diffdeck-breakdown` and `/diffdeck-apply` for Claude Code, Cursor and OpenCode |
+| `diffdeck init <agent>` | Only for `claude`, `cursor` or `opencode` |
+| `diffdeck prepare <target>` | Collect the diff only (this is what agents run) |
+| `diffdeck validate` | Check the agent's `breakdown.json` and list any errors |
+| `diffdeck feedback` | Print your feedback (`.diffdeck/feedback.md`) |
 
-The home screen shows the parts of your system that the change touches, such as callers,
-modules, services, caches and config, and how they connect.
+### Maintenance
 
-- Colors show what changed: green for **added**, blue for **changed**, red with a dashed, struck-through outline for **removed**, and white for unchanged context
-- **Hover** a node to trace its connections; the related edges animate and everything else fades
-- **Click** a node to open that change
-- **Walk through** moves from one change to the next in the suggested reading order
-- Drag to pan; pinch or Cmd/Ctrl-scroll to zoom; the **fit** button fits the diagram to the screen
+| Command | What it does |
+|---|---|
+| `diffdeck upgrade` | Update to the latest version |
+| `diffdeck upgrade --force` | Reinstall the current version |
+| `diffdeck --version` | Print the installed version |
+| `diffdeck --help` | List every command |
+
+### Options
+
+| Option | Meaning |
+|---|---|
+| `--port <n>` | Port for the server (default `4777`, or the next free port) |
+| `--no-open` | Do not open the browser |
+| `--version` | Print the version |
+| `--help` | Print help |
+
+### Environment variables
+
+| Variable | Meaning |
+|---|---|
+| `DIFFDECK_PORT` | Default port for the server |
+| `DIFFDECK_HOME` | Where the list of reviews is kept (default `~/.diffdeck`) |
+| `DIFFDECK_NO_OPEN=1` | Never open a browser (useful in scripts) |
+| `NO_COLOR=1` | Plain terminal output, without colors |
+
+---
+
+## Features
+
+### System flow diagram
+
+The home screen shows the parts of your system the change touches (callers, modules,
+services, caches, config) and how they connect.
+
+- Green: **added**. Blue: **changed**. Red and dashed: **removed**. White: unchanged context.
+- Hover a node to trace its connections; click it to open that change.
+- **Walk through** moves from one change to the next in reading order.
+- Drag to pan. Pinch or Cmd/Ctrl-scroll to zoom. The **fit** button fits the diagram to the screen.
 
 <img src="docs/walkthrough.png" alt="Guided walkthrough highlighting one change at a time" width="100%">
 
-### 2. A logic flowchart for every change
+### Logic flowchart for every change
 
 Each change opens on a flowchart of what the code does after the change: steps,
-decision diamonds with yes/no branches, and I/O steps.
+decision diamonds with yes/no branches, and input/output steps.
 
-- **Click a step** to jump to the code diff with exactly those lines highlighted
-- **Click a decision diamond** to compare the design alternatives side by side
-- Choose **Prefer this approach**, and the diagram labels the diamond with the alternative you picked
+- Click a step to see its exact lines highlighted in the code diff.
+- Click a decision diamond to compare the design alternatives, with pros and cons.
+- Choose **Prefer this approach**, and the diagram labels the diamond with your choice.
 
 <img src="docs/logic.png" alt="Logic flowchart with a decision's alternatives, pros and cons" width="100%">
 
-### 3. The real code, one click away
+### Code diff
 
-The diff viewer has syntax highlighting, word-level change marks, and line numbers for
-both the old and new versions. Toggle between *this change only* and *whole files*.
-Click any line number to leave a note on that line.
+- Syntax highlighting and word-level change marks
+- Line numbers for both the old and the new version
+- Toggle between *this change only* and *whole files*
+- Click a line number to leave a note
 
 <img src="docs/code.png" alt="Code diff with the lines for the selected step highlighted" width="100%">
 
-### 4. Two ways to finish: hand off to an agent, or post on GitHub
-
-The top bar has two buttons, **Hand off to agent** and **Post on GitHub**. Each opens its
-own panel, and you can switch between them there.
+### Two ways to finish
 
 <img src="docs/handoff.png" alt="Hand off to agent panel, with the Post on GitHub option beside it" width="100%">
 
-**Hand off to agent.** Everything you do is saved continuously to `.diffdeck/feedback.md`:
-approvals, requested changes, preferred alternatives (with their trade-offs written out),
-line notes with `file:line` references, and an overall comment. Copy the prompt for your
-tool, and the agent implements the requested changes while leaving approved cards untouched.
+**Hand off to agent** saves everything to `.diffdeck/feedback.md`:
 
-**Post on GitHub.** Your review is published on the pull request through the
-[GitHub CLI](https://cli.github.com): line notes become inline comments, while design
-decisions and card notes form the summary. You choose *Comment*, *Request changes* or
-*Approve*. diffdeck guides you through each step and guards against mistakes:
-
-| Situation | What diffdeck does |
-|---|---|
-| `gh` is not installed | Shows the install command for your OS, then **Check again** |
-| Not logged in | **Log in with GitHub** starts GitHub's device login: diffdeck shows the one-time code, and **Copy code & open GitHub** finishes it in your browser. The page continues automatically, and diffdeck never sees your password or token |
-| No remote or no PR for the branch | Explains why and gives the command to fix it (`gh pr create --fill`, or `diffdeck review --pr <n>`) |
-| The PR changed after you reviewed, or the review includes uncommitted or unpushed lines | Warns you, re-checks every line note against the PR's **current** diff, and moves notes that no longer match into the summary rather than misplacing them |
-| It is your own PR | Offers only *Comment*, because GitHub forbids approving or requesting changes on your own PR |
-| The PR is closed or merged, or there is nothing to post | Disables posting and explains why |
-| The same review was already posted | Shows a link to it and posts again only if you tick *Post it again anyway* |
-| Every post | Requires you to confirm *"I understand this posts publicly on PR #N as @you"* |
-
-The same flow works in the terminal: `diffdeck login`, then `diffdeck post` (preview),
-then `diffdeck post --yes`.
+- approvals and requested changes per card
+- preferred alternatives, with their trade-offs written out
+- line notes with `file:line` references
+- an overall comment
 
 <details>
 <summary>Example <code>feedback.md</code></summary>
@@ -213,8 +397,8 @@ then `diffdeck post --yes`.
 Files: `src/client.js`
 
 - **Change design decision:** Which failures should be retried?
-  - Current: **5xx and network errors** — Retry server errors and anything thrown by fetch.
-  - Switch to: **Idempotent methods only** — Retry only GET/HEAD/PUT/DELETE.
+  - Current: **5xx and network errors** - Retry server errors and anything thrown by fetch.
+  - Switch to: **Idempotent methods only** - Retry only GET/HEAD/PUT/DELETE.
   - Expected benefits: No duplicated writes; Matches HTTP semantics
   - Accepted trade-offs: POST callers get no resilience
   - Reviewer note: POSTs must not be retried.
@@ -222,97 +406,67 @@ Files: `src/client.js`
   `await sleep(config.backoffMs * 2 ** attempt);`
   Skip the sleep after the last attempt.
 
-## Approved — do not change
+## Approved - do not change
 - Move timeout, retries, backoff and TTL into config.json `config-knobs`
 ```
 </details>
 
-## Command reference
+**Post on GitHub** guides you through every step and guards against mistakes:
 
-| Command | What it does |
-|---|---|
-| `diffdeck` | Reviews whatever was prepared earlier (PR, branch or commit); if nothing was, the current branch against `main`/`master` (auto-detected; uncommitted edits included). Opens the browser |
-| `diffdeck review <target>` | Reviews a PR link or number, a branch (against `main`) or a commit (against its parent); the kind is detected automatically |
-| `diffdeck review --pr <n\|link>` | Reviews a GitHub pull request (requires the [`gh`](https://cli.github.com) CLI) |
-| `diffdeck review --branch <name> [--base <branch>]` | Reviews a branch against `main`, or against `--base` |
-| `diffdeck review --commit <id>` | Reviews one commit against its parent |
-| `diffdeck review --base <branch>` | Reviews the current branch against another base branch |
-| `diffdeck review --staged` | Reviews only staged changes |
-| `diffdeck review --worktree` | Reviews uncommitted changes against `HEAD` |
-| `diffdeck demo` | Opens the sample review |
-| `diffdeck init [claude\|cursor\|opencode\|all]` | Adds the `/diffdeck-breakdown` and `/diffdeck-apply` commands to the repo |
-| `diffdeck prepare [same options]` | Only collects the diff; this is what agents run |
-| `diffdeck serve` | Adds this repository to the shared server (starting it in the background if needed) and opens `http://127.0.0.1:4777/<repository-name>/`, without collecting the diff again |
-| `diffdeck serve --foreground` | Runs the shared server in this terminal instead (Ctrl+C stops it), which is useful for debugging |
-| `diffdeck list` | Lists every repository on the server with its address and folder |
-| `diffdeck stop` | Removes this repository from the server; the server stops itself when no reviews are left |
-| `diffdeck stop --all` | Stops the server and every review on it |
-| `diffdeck post` | Previews your review for the pull request; nothing is sent |
-| `diffdeck post --yes [--event comment\|request-changes\|approve]` | Posts the review on GitHub (`--force` re-posts an identical review) |
-| `diffdeck login` | Logs in to GitHub through `gh` (browser device flow) |
-| `diffdeck upgrade [--force]` | Updates diffdeck from GitHub (via npm, or `git pull` for a clone install), refreshes this repository's slash commands, and restarts the running server (every review keeps its address) |
-| `diffdeck validate` | Checks the agent's `breakdown.json` and reports precise errors |
-| `diffdeck feedback` | Prints `feedback.md` |
+- **`gh` not installed**: shows the install command for your system.
+- **Not logged in**: **Log in with GitHub** shows a one-time code; **Copy code & open GitHub** finishes the login in your browser. diffdeck never sees your password or token.
+- **No remote or no pull request**: explains why and gives the command to fix it.
+- **The PR changed since you reviewed it**: every line note is re-checked against the PR's current diff; notes that no longer match go into the summary instead of landing on the wrong line.
+- **Your own PR**: only *Comment* is offered, because GitHub does not let you approve your own PR.
+- **Closed PR or nothing to post**: posting is disabled, with the reason.
+- **Already posted**: shows a link to the earlier review and posts again only if you confirm.
+- **Every post**: needs you to confirm that it is public.
 
-Options: `--port <n>` (default `4777`, then the next free port), `--no-open`, `--version`, `--help`.
-
-The list of repositories on the server lives in `~/.diffdeck/repos.json`, and the server's
-address in `~/.diffdeck/hub.json`. Set `DIFFDECK_HOME` to keep them somewhere else.
-
-Running `diffdeck` again on the same diff keeps the breakdown and your feedback.
-When the diff changes, the old files are kept as `*.prev`, because their line
-references would no longer match.
-
-## Agent support
-
-| Agent | Setup | Step 1 | Step 3 |
-|---|---|---|---|
-| Claude Code | `diffdeck init claude` (writes `.claude/commands/`) | `/diffdeck-breakdown <PR, branch or commit>` | `/diffdeck-apply` |
-| Cursor | `diffdeck init cursor` (writes `.cursor/commands/`) | `/diffdeck-breakdown <PR, branch or commit>` | `/diffdeck-apply` |
-| OpenCode | `diffdeck init opencode` (writes `.opencode/command/`) | `/diffdeck-breakdown <PR, branch or commit>` | `/diffdeck-apply` |
-| Anything else | add the snippet `diffdeck init` prints to `AGENTS.md` | "run `diffdeck prepare <PR link, branch or commit>`, then follow `.diffdeck/AGENT_TASK.md`" | "implement `.diffdeck/feedback.md`" |
-
-`/diffdeck-breakdown` takes a PR link, a branch name or a commit id. Without one, the agent asks first.
+---
 
 ## How it works
 
 ```
-  PR (gh pr diff), branch (vs main) or commit (vs parent)
+  PR, branch or commit
           |
           v
-  diffdeck prepare  -->  .diffdeck/diff.patch, hunks.md, AGENT_TASK.md, breakdown.schema.json
+  diffdeck prepare   -->  .diffdeck/diff.patch, hunks.md, AGENT_TASK.md
           |
           v
-  your agent        -->  .diffdeck/breakdown.json   (system flow, cards, logic flows, decisions)
+  your agent         -->  .diffdeck/breakdown.json   (diagrams, cards, decisions)
           |
           v
-  diffdeck (browser) --> .diffdeck/feedback.md      (saved as you review)
+  browser review     -->  .diffdeck/feedback.md      (saved as you review)
           |
           v
-  your agent        -->  code changes   (or: Post on GitHub as a PR review)
+  your agent         -->  code changes
+  or Post on GitHub  -->  a pull request review
 ```
 
-Every file lives in `.diffdeck/` at the repository root. diffdeck adds that folder to
-`.git/info/exclude`, so it never appears in `git status` and your `.gitignore` stays untouched.
+All files live in `.diffdeck/` at the repository root. diffdeck adds that folder to
+`.git/info/exclude`, so it never appears in `git status` and your `.gitignore` is not changed.
 
 | File | Written by | Purpose |
 |---|---|---|
-| `diff.patch`, `diff.json`, `hunks.md` | `prepare` | Raw diff, parsed diff, and an index of hunks for the agent |
-| `AGENT_TASK.md`, `breakdown.schema.json` | `prepare` | Instructions and the exact output format for the agent |
-| `breakdown.json` | agent | System flow, change cards, logic flowcharts, design decisions |
-| `feedback.json` | browser | Review state, restored when you reopen the review |
-| `feedback.md` | browser | The hand-off for the implementing agent |
+| `diff.patch`, `diff.json`, `hunks.md` | `prepare` | The diff, parsed, with an index of its hunks |
+| `AGENT_TASK.md`, `breakdown.schema.json` | `prepare` | Instructions and output format for the agent |
+| `breakdown.json` | agent | Diagrams, change cards, flowcharts and design decisions |
+| `feedback.json` | browser | Your review state, restored when you reopen it |
+| `feedback.md` | browser | The hand-off for the agent |
+
+When you prepare a different diff, the old breakdown and feedback are kept as `*.prev`,
+because their line references no longer match.
 
 <details>
-<summary><b>breakdown.json at a glance</b></summary>
+<summary><b>The breakdown format</b></summary>
 
-The full contract is in [`schema/breakdown.schema.json`](schema/breakdown.schema.json).
+The full format is in [`schema/breakdown.schema.json`](schema/breakdown.schema.json).
 
 ```jsonc
 {
   "title": "Retry transient HTTP failures and cache responses with a TTL",
-  "summary": "…",
-  "reviewOrder": "Start with the retry loop …",
+  "summary": "...",
+  "reviewOrder": "Start with the retry loop ...",
   "flow": {                                   // system diagram (home screen)
     "direction": "LR",
     "nodes": [
@@ -324,12 +478,12 @@ The full contract is in [`schema/breakdown.schema.json`](schema/breakdown.schema
   },
   "cards": [{
     "id": "retry-loop", "title": "Retry 5xx and network errors", "kind": "feature", "risk": "high",
-    "summary": "…", "why": "…",
-    "refs": [{ "file": "src/client.js", "hunks": [0] }],   // which diff hunks this card covers
+    "summary": "...", "why": "...",
+    "refs": [{ "file": "src/client.js", "hunks": [0] }],   // the diff hunks this card covers
     "decisions": [{
       "question": "Which failures should be retried?",
-      "chosen":       { "label": "5xx and network errors", "description": "…", "pros": ["…"], "cons": ["…"] },
-      "alternatives": [{ "label": "Idempotent methods only", "description": "…", "pros": ["…"], "cons": ["…"], "effort": "small" }]
+      "chosen":       { "label": "5xx and network errors", "description": "...", "pros": ["..."], "cons": ["..."] },
+      "alternatives": [{ "label": "Idempotent methods only", "description": "...", "pros": ["..."], "cons": ["..."], "effort": "small" }]
     }],
     "flow": {                                 // logic flowchart for this card
       "nodes": [
@@ -342,52 +496,157 @@ The full contract is in [`schema/breakdown.schema.json`](schema/breakdown.schema
 }
 ```
 
-Node `type`: `actor` · `component` · `service` · `data` · `external`.
-Flowchart `shape`: `start` · `end` · `step` · `decision` · `io`.
-`change`: `added` · `modified` · `removed` · `unchanged`.
+- Node `type`: `actor`, `component`, `service`, `data`, `external`
+- Flowchart `shape`: `start`, `end`, `step`, `decision`, `io`
+- `change`: `added`, `modified`, `removed`, `unchanged`
 </details>
+
+---
+
+## Help
+
+### Built-in help
+
+```sh
+diffdeck --help               # every command and option
+diffdeck --version            # the installed version
+diffdeck list                 # where your reviews are
+diffdeck validate             # what is wrong with a breakdown
+```
+
+### Troubleshooting
+
+**`diffdeck: command not found`**
+
+The global npm folder is not on your `PATH`, or the install failed. Reinstall and check:
+
+```sh
+npm install -g github:AmeyaKasture/diffdeck
+npm prefix -g                 # its bin/ folder must be on your PATH
+```
+
+**`EACCES` permission error during install or upgrade**
+
+Your global npm folder needs administrator rights. Either run the command with `sudo`, or
+[set npm up to install without it](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally).
+
+**The agent says `diffdeck prepare` does not accept a PR link, a branch or a commit**
+
+You are on an old version. Upgrade, then refresh the repository's slash commands:
+
+```sh
+diffdeck upgrade
+diffdeck init
+```
+
+**The page says "No breakdown yet"**
+
+The agent has not finished, or it never ran. Run `/diffdeck-breakdown` in your agent; the
+page updates by itself when the breakdown is written. If the agent finished but the page
+still shows this, check the breakdown:
+
+```sh
+diffdeck validate
+```
+
+**The review address does not open**
+
+The server may have stopped (for example after a restart). Run `diffdeck` in the repository
+to start it again; the address stays the same.
+
+**A pull request cannot be found, or posting fails**
+
+Check that `gh` is installed and logged in, and that you run diffdeck inside the PR's repository:
+
+```sh
+gh auth status
+diffdeck login
+gh pr view <number>
+```
+
+**"... is already merged into main"**
+
+A merged branch has nothing left to compare. Review its merge commit or its pull request instead.
+
+**"Could not find a pull request, branch or commit called ..."**
+
+Check the spelling, or fetch first with `git fetch`. To say exactly what you mean, use
+`--pr`, `--branch` or `--commit`.
+
+**Port 4777 is already in use**
+
+diffdeck picks the next free port automatically and prints the address. To choose the port
+yourself, restart the server on it:
+
+```sh
+diffdeck stop --all
+diffdeck serve --port 4800
+```
+
+**Start from scratch**
+
+```sh
+diffdeck stop --all
+rm -rf .diffdeck              # in the repository
+diffdeck
+```
+
+### Report a problem
+
+Open an issue at [github.com/AmeyaKasture/diffdeck/issues](https://github.com/AmeyaKasture/diffdeck/issues) with:
+
+- the output of `diffdeck --version`
+- the command you ran and the full message it printed
+- your operating system and `node --version`
+
+---
 
 ## FAQ
 
 **Does my code leave my machine?**
-No. diffdeck makes no network requests of its own. The server listens only on
-`127.0.0.1` and rejects requests from other origins. GitHub is contacted only through
-`gh`, and only when you ask: to fetch a PR (`--pr`), to check which PR you are
-reviewing, or to post a review you have confirmed. `diffdeck upgrade` downloads the
-latest version from GitHub when you run it.
 
-**What does a posted review look like?**
-Line notes appear as inline comments on the exact lines. The summary lists each
-card that needs changes, any design alternatives you preferred (with the reason), and
-the cards that look good. diffdeck adds no signature or branding.
+No. The server listens only on `127.0.0.1` and rejects requests from other sites. GitHub is
+contacted only through `gh`, and only when you fetch a PR or post a review you have confirmed.
+`diffdeck upgrade` downloads the new version from GitHub when you run it.
 
 **Can I use it without an AI agent?**
-Yes. Without a breakdown, the diagram shows the changed files grouped by directory.
-Each file opens as its own card with the full diff, line comments and approvals.
-You can also write `breakdown.json` by hand.
 
-**Which agent writes the best breakdowns?**
-Any capable model will do. `AGENT_TASK.md` gives detailed instructions, and
-`diffdeck validate` catches mistakes such as references to lines that don't exist,
-edges between unknown nodes, or hunks that no card covers.
+Yes. Without a breakdown, the diagram shows the changed files grouped by folder, and each file
+opens as its own card with the full diff, line notes and approvals.
 
-**Large PRs?**
-The agent is asked to group the change into 3–15 cards by intent. The diagrams lay
-themselves out automatically, and you can pan, zoom and fit them to the screen.
+**Which agent works best?**
 
-**Windows / Linux?**
-Yes. diffdeck needs only Node 18+ and git. It opens your default browser with
-`open`, `xdg-open` or `start`.
+Any capable model. `AGENT_TASK.md` gives detailed instructions, and `diffdeck validate` catches
+mistakes such as references to lines that do not exist.
+
+**How does it handle large pull requests?**
+
+The agent groups the change into 3 to 15 cards by intent. The diagrams lay themselves out
+automatically, and you can pan, zoom and fit them to the screen.
+
+**Does it work on Windows and Linux?**
+
+Yes. It needs only Node 18+ and git.
+
+**What does a posted review look like?**
+
+Line notes appear as inline comments on the exact lines. The summary lists the cards that need
+changes, the alternatives you preferred, and the cards that look good. diffdeck adds no
+signature or branding.
+
+---
 
 ## Development
 
 ```sh
-git clone https://github.com/AmeyaKasture/diffdeck.git && cd diffdeck
-npm test                 # parser, validation and feedback tests
+git clone https://github.com/AmeyaKasture/diffdeck.git
+cd diffdeck
+npm link                      # use this clone as your diffdeck command
+npm test
 node bin/diffdeck.js demo
 ```
 
-The UI is plain HTML, CSS and JavaScript in [`ui/`](ui), with no build step.
-[`ui/graph.js`](ui/graph.js) holds a small layered-graph layout engine (in the
-style of Sugiyama: ranking, crossing reduction, and placement with path-following
-edge labels).
+- `bin/` is the command-line interface
+- `lib/` holds diff parsing, validation, the server, GitHub posting and the agent instructions
+- `ui/` is plain HTML, CSS and JavaScript, with no build step; `ui/graph.js` is the diagram layout engine
+- `schema/` holds the breakdown format

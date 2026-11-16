@@ -16,7 +16,7 @@ const c = process.stdout.isTTY && !process.env.NO_COLOR
   ? { b: (s) => `\x1b[1m${s}\x1b[0m`, dim: (s) => `\x1b[2m${s}\x1b[0m`, blue: (s) => `\x1b[34m${s}\x1b[0m`, green: (s) => `\x1b[32m${s}\x1b[0m`, yellow: (s) => `\x1b[33m${s}\x1b[0m` }
   : { b: (s) => s, dim: (s) => s, blue: (s) => s, green: (s) => s, yellow: (s) => s };
 
-const HELP = `${c.b('diffdeck')} ${c.dim(`v${version}`)} — review a diff or PR as an interactive flow diagram
+const HELP = `${c.b('diffdeck')} ${c.dim(`v${version}`)} — review a PR, branch or commit as an interactive flow diagram
 
 ${c.b('Usage')}
   diffdeck                      Open this repository's review (the prepared PR, or this branch vs main)

@@ -177,6 +177,144 @@ test('hub gives each repository its own address', () => {
   delete process.env.DIFFDECK_HOME;
 });
 
+function gitRepo() {
+  const fs = require('fs'); const os = require('os'); const path = require('path');
+  const { execFileSync } = require('child_process');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dd-git-'));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null' };
+  const git = (cwd, ...a) => execFileSync('git', a, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const write = (root, f, text) => { fs.mkdirSync(path.dirname(path.join(root, f)), { recursive: true }); fs.writeFileSync(path.join(root, f), text); };
+  return { fs, path, tmp, git, write, done: () => fs.rmSync(tmp, { recursive: true, force: true }) };
+}
+
+const lines = (n, tag) => Array.from({ length: n }, (_, i) => `line ${i + 1}${tag && tag[i + 1] ? ` ${tag[i + 1]}` : ''}`).join('\n') + '\n';
+
+test('prefers origin/main when local main is behind, and says so', () => {
+  const { tmp, git, write, path, done } = gitRepo();
+  const origin = path.join(tmp, 'origin.git');
+  const work = path.join(tmp, 'work');
+  git(tmp, 'init', '-q', '--bare', '-b', 'main', origin);
+  git(tmp, 'clone', '-q', origin, work);
+  write(work, 'a.txt', 'one\n'); git(work, 'add', '.'); git(work, 'commit', '-qm', 'one'); git(work, 'push', '-q', 'origin', 'main');
+  git(work, 'checkout', '-qb', 'feature');
+  write(work, 'b.txt', 'feature\n'); git(work, 'add', '.'); git(work, 'commit', '-qm', 'feature');
+  // Someone else lands two commits on main; this clone only fetches them.
+  const other = path.join(tmp, 'other');
+  git(tmp, 'clone', '-q', origin, other);
+  write(other, 'c.txt', 'c\n'); git(other, 'add', '.'); git(other, 'commit', '-qm', 'c');
+  write(other, 'd.txt', 'd\n'); git(other, 'add', '.'); git(other, 'commit', '-qm', 'd'); git(other, 'push', '-q', 'origin', 'main');
+  git(work, 'fetch', '-q');
+  git(work, 'rebase', '-q', 'origin/main');
+
+  delete require.cache[require.resolve('../lib/source')];
+  const source = require('../lib/source');
+  assert.strictEqual(source.defaultBranch(work), 'origin/main');
+  const { meta, files } = source.collect(work, { branch: 'feature' });
+  assert.deepStrictEqual(files.map((f) => f.path), ['b.txt'], 'only the feature change, not main\'s new commits');
+  assert.strictEqual(meta.base, 'origin/main');
+  assert.match(meta.notes[0], /local main is 2 commit\(s\) behind origin\/main; using origin\/main/);
+  assert.strictEqual(meta.baseSha, git(work, 'rev-parse', 'origin/main'));
+  const explicit = source.collect(work, { branch: 'feature', base: 'main' });
+  assert.match(explicit.meta.notes[0], /behind origin\/main.*--base origin\/main/);
+  const md = require('../lib/feedback').render(meta, [], require('../lib/feedback').sanitize({})).markdown;
+  assert.match(md, new RegExp(`- Base: \`origin/main\` @ \`${meta.baseSha.slice(0, 7)}\``));
+  assert.match(md, new RegExp(`- Head: \`feature\` @ \`${meta.head}\``));
+  done();
+});
+
+test('a new round keeps unchanged cards and approvals, and marks changed ones stale', () => {
+  const { tmp, git, write, fs, path, done } = gitRepo();
+  git(tmp, 'init', '-q', '-b', 'main');
+  write(tmp, 'a.txt', lines(40)); write(tmp, 'b.txt', lines(10));
+  git(tmp, 'add', '.'); git(tmp, 'commit', '-qm', 'base');
+  write(tmp, 'a.txt', lines(40, { 5: 'changed', 30: 'also' })); write(tmp, 'b.txt', lines(10, { 2: 'b' }));
+
+  delete require.cache[require.resolve('../lib/source')];
+  const { prepare } = require('../lib/source');
+  const { load } = require('../lib/breakdown');
+  const r1 = prepare(tmp, {});
+  assert.strictEqual(r1.meta.round, 1);
+  const dir = r1.dir;
+  const card = (id, refs, flow) => ({ id, title: id, summary: 's', kind: 'fix', risk: 'low', refs, flow });
+  const flow = { nodes: [{ id: 's', label: 'start', shape: 'start' }, { id: 'x', label: 'x', shape: 'step', ref: { file: 'a.txt', lines: [30, 30] } }], edges: [{ from: 's', to: 'x' }] };
+  fs.writeFileSync(path.join(dir, 'breakdown.json'), JSON.stringify({ title: 't', summary: 's', cards: [
+    card('top', [{ file: 'a.txt', hunks: [0] }]), card('bottom', [{ file: 'a.txt', hunks: [1] }], flow), card('other', [{ file: 'b.txt' }]),
+  ] }));
+  fs.writeFileSync(path.join(dir, 'feedback.json'), JSON.stringify({ cards: { top: { status: 'approved' }, bottom: { status: 'approved' }, other: { status: 'changes' } }, lines: [] }));
+
+  // Round 2: a.txt grows by two lines at the top-hunk, b.txt's change is reworked.
+  write(tmp, 'a.txt', lines(40, { 5: 'changed', 30: 'also' }).replace('line 1\n', 'line 1\nnew 1\nnew 2\n'));
+  write(tmp, 'b.txt', lines(10, { 2: 'reworked' }));
+  const r2 = prepare(tmp, {});
+  assert.strictEqual(r2.meta.round, 2);
+  assert.ok(fs.existsSync(path.join(dir, 'rounds', '1', 'breakdown.json')), 'round 1 archived');
+  const { kept, stale, removed, approvals } = r2.rounds;
+  assert.deepStrictEqual(kept.map((c) => c.id), ['bottom']);
+  assert.deepStrictEqual(stale.map((c) => c.id), ['top', 'other'], 'edited hunks follow their cards, which become stale');
+  assert.deepStrictEqual(removed.map((c) => c.id), []);
+  assert.deepStrictEqual(approvals, ['bottom']);
+  const loaded = load(dir);
+  assert.deepStrictEqual(loaded.errors, []);
+  const bottom = loaded.cards.find((c) => c.id === 'bottom');
+  assert.deepStrictEqual(bottom.flow.nodes[1].ref.lines, [32, 32], 'flow step follows its code down two lines');
+  assert.strictEqual(bottom.carried, 1);
+  assert.match(loaded.warnings.join('\n'), /top\) is stale/);
+  assert.match(fs.readFileSync(path.join(dir, 'refresh.md'), 'utf8'), /`top`.*1 of its 1 hunk\(s\) were edited/);
+  assert.strictEqual(loaded.uncovered.length, 0, 'every hunk still has a card');
+
+  // Preparing again with no change keeps everything.
+  const r3 = prepare(tmp, {});
+  assert.strictEqual(r3.unchanged, true);
+  assert.strictEqual(r3.meta.round, 2);
+  assert.ok(fs.existsSync(path.join(dir, 'breakdown.json')));
+
+  // Reverting b.txt removes the card that only covered it.
+  write(tmp, 'b.txt', lines(10));
+  const r4 = prepare(tmp, {});
+  assert.deepStrictEqual(r4.rounds.removed.map((c) => c.id), ['other']);
+  assert.deepStrictEqual(r4.rounds.stale.map((c) => c.id), ['top'], 'still stale until the agent updates it');
+  assert.strictEqual(r4.meta.round, 3);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'feedback.json'), 'utf8')).cards.bottom.status, 'approved');
+  done();
+});
+
+test('validate warns about flow steps that cannot open code', () => {
+  const files = parseDiff(PATCH);
+  const r = resolve({ title: 't', summary: 's', cards: [{ id: 'one', title: 'One', summary: '', kind: 'fix', risk: 'low', refs: [{ file: 'src/a.js', hunks: [0] }],
+    flow: { nodes: [
+      { id: 's', label: 'start', shape: 'start' },
+      { id: 'u', label: 'unchanged', shape: 'step', ref: { file: 'src/a.js', lines: [7, 8] } },
+      { id: 'o', label: 'other hunk', shape: 'step', ref: { file: 'src/a.js', lines: [11, 11] } },
+      { id: 'n', label: 'nothing', shape: 'step' },
+      { id: 'e', label: 'end', shape: 'end' },
+    ], edges: [] } }] }, files);
+  const text = r.warnings.join('\n');
+  assert.match(text, /"unchanged": src\/a\.js:7-8 is not in the diff/);
+  assert.match(text, /"other hunk": src\/a\.js:11-11 is outside this card's hunks/);
+  assert.match(text, /"nothing" has no ref/);
+  assert.doesNotMatch(text, /"start"|"end"/);
+});
+
+test('questions are listed separately with their replies', () => {
+  const fb = sanitize({ lines: [
+    { id: 'q1', cardId: 'retry', file: 'src/a.js', side: 'new', line: 2, comment: 'why is this needed?', kind: 'question' },
+    { id: 'c1', cardId: 'retry', file: 'src/a.js', side: 'new', line: 3, comment: 'rename it' },
+  ] });
+  const cards = [{ id: 'retry', title: 'Retry', hunks: [{ file: 'src/a.js', hunk: 0 }], decisions: [] }];
+  const { sanitizeReplies } = require('../lib/feedback');
+  const replies = sanitizeReplies({ q1: 'Because the API retries.', c1: ['Renamed to maxRetries.'], bad: 5 });
+  assert.deepStrictEqual(Object.keys(replies), ['q1', 'c1']);
+  const { markdown, actionable, questions } = render({ label: 'x' }, cards, fb, replies);
+  assert.strictEqual(actionable, 1);
+  assert.strictEqual(questions, 1);
+  const [changes, qs] = markdown.split('## Questions');
+  assert.match(changes, /rename it/);
+  assert.doesNotMatch(changes, /why is this needed/);
+  assert.match(qs, /why is this needed\?[\s\S]*comment id `q1`|comment id `q1`[\s\S]*why is this needed/);
+  assert.match(qs, /Agent replied: Because the API retries\./);
+  assert.match(markdown, /replies\.json/);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message}`); }

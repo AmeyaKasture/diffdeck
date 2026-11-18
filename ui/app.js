@@ -17,6 +17,8 @@ const S = {
   view: (() => { try { return localStorage.getItem('diffdeck.view') || 'flow'; } catch { return 'flow'; } })(),
   sheetTab: 'diff',     // 'flow' | 'diff' inside a card
   focus: null,          // { file, side, a, b, label } lines highlighted from a flow step
+  fileView: null,       // { file, side, a, b, label, text, error } whole file for a step on unchanged lines
+  questions: 0,
   pendingScroll: false,
   flashDecision: null,
   walk: null,           // index into walkthrough order
@@ -267,7 +269,8 @@ function nodeSvg(n, mode, card) {
   if (mode === 'logic' && n.ref) extras += `<g class="codeicon" transform="translate(${x + w - (n.shape === 'diamond' ? w / 2 - 6 : 14)},${y + (n.shape === 'diamond' ? 12 : h / 2)})"><text>‹›</text></g>`;
 
   const clickable = mode === 'system' ? !!n.card : !!(n.ref || Number.isInteger(n.decision));
-  return `<g class="gnode ch-${esc(n.change || 'unchanged')} sh-${n.shape} ty-${esc(n.type || 'none')}${clickable ? ' clickable' : ''}" data-act="gnode" data-node="${esc(n.id)}" tabindex="${clickable ? 0 : -1}" role="${clickable ? 'button' : 'img'}" aria-label="${esc(n.label)}">${shape}${textBlock(n)}${extras}</g>`;
+  const inert = mode === 'logic' && !clickable;
+  return `<g class="gnode ch-${esc(n.change || 'unchanged')} sh-${n.shape} ty-${esc(n.type || 'none')}${clickable ? ' clickable' : ''}${inert ? ' inert' : ''}" data-act="gnode" data-node="${esc(n.id)}" tabindex="${clickable ? 0 : -1}" role="${clickable ? 'button' : 'img'}" aria-label="${esc(n.label)}${inert ? ' (no code linked)' : ''}">${shape}${textBlock(n)}${extras}</g>`;
 }
 
 function edgeSvg(e) {
@@ -428,9 +431,11 @@ function showTip(name, id, tip, canvas, e) {
   } else {
     const card = S.data.cards.find((c) => c.id === S.openId);
     const bits = [];
-    if (Number.isInteger(n.decision) && card && card.decisions[n.decision]) bits.push(`<p><b>Design decision:</b> ${esc(card.decisions[n.decision].question)}</p><div class="tip-foot"><span class="go">Click to compare alternatives →</span></div>`);
-    else if (n.ref) bits.push(`<p class="mono">${esc(n.ref.file)}:${n.ref.lines[0]}–${n.ref.lines[1]}</p><div class="tip-foot"><span class="go">Click to see the code →</span></div>`);
-    if (!bits.length) return;
+    const dec = Number.isInteger(n.decision) && card && card.decisions[n.decision];
+    if (dec) bits.push(`<p><b>Design decision:</b> ${esc(dec.question)}</p>`);
+    if (n.ref) bits.push(`<p class="mono">${esc(n.ref.file)}:${n.ref.lines[0]}–${n.ref.lines[1]}</p>`);
+    if (dec || n.ref) bits.push(`<div class="tip-foot"><span class="go">${n.ref && dec ? 'Click to see the code and the alternatives →' : n.ref ? 'Click to see the code →' : 'Click to compare alternatives →'}</span></div>`);
+    else bits.push('<p class="muted">No code is linked to this step.</p>');
     html = `<b>${esc(n.label)}</b>${CHANGE_TAG[n.change] ? ` <span class="chip-inline c-${esc(n.change)}">${CHANGE_TAG[n.change]}</span>` : ''}${bits.join('')}`;
   }
   tip.innerHTML = html;
@@ -488,8 +493,8 @@ function onDiagramNode(name, id) {
     const df = S.fb.decisions[key];
     S.openOpt[key] = df && df.preferred >= 0 ? df.preferred : card.decisions[n.decision].alternatives.length ? 0 : -1;
     S.flashDecision = n.decision;
-    renderSheet();
-    return;
+    // A step with code too: show the decision in the side panel and the code beside it.
+    if (!n.ref) { renderSheet(); return; }
   }
   if (n.ref) focusLines(card, { file: n.ref.file, side: n.ref.side === 'old' ? 'old' : 'new', a: n.ref.lines[0], b: n.ref.lines[1], label: n.label });
 }
@@ -501,8 +506,9 @@ function focusLines(card, focus) {
   const cardHunks = card.hunks.filter((h) => h.file === focus.file && h.hunk != null).map((h) => h.hunk);
   const inCard = f.hunks.some((h) => cardHunks.includes(h.index) && inHunk(h));
   const anywhere = f.hunks.some(inHunk);
-  if (!anywhere) toast(`Lines ${focus.a}–${focus.b} are unchanged, so they are not in the diff`);
-  if (!inCard && anywhere) S.fullFiles = true;
+  if (!anywhere) { openFileView(focus); return; }
+  S.fileView = null;
+  if (!inCard) S.fullFiles = true;
   if (!card.hunks.some((h) => h.file === focus.file)) S.fullFiles = true;
   S.focus = focus;
   S.sheetTab = 'diff';
@@ -511,6 +517,43 @@ function focusLines(card, focus) {
 }
 
 /* ---------------- page ---------------- */
+
+// A step that points at code the change does not touch: show the whole file
+// as it is in the change, scrolled to those lines.
+async function openFileView(focus) {
+  S.focus = null;
+  S.fileView = { ...focus, text: null, error: null };
+  S.sheetTab = 'diff';
+  renderSheet();
+  try {
+    const res = await fetch(`api/file?path=${encodeURIComponent(focus.file)}&side=${focus.side}`);
+    const body = await res.json();
+    if (!S.fileView || S.fileView.file !== focus.file) return;
+    if (!res.ok) S.fileView.error = body.error || res.statusText;
+    else S.fileView.text = body.text;
+  } catch (e) {
+    if (S.fileView) S.fileView.error = e.message;
+  }
+  S.pendingScroll = true;
+  renderSheet();
+}
+
+function renderFileView(fv) {
+  const where = `${esc(fv.file)}:${fv.a}–${fv.b}`;
+  const bar = `<div class="focus-bar"><span class="fb-dot"></span><span>Step <b>${esc(fv.label || '')}</b> · <span class="mono">${where}</span> · unchanged code, shown from the ${fv.side === 'old' ? 'old' : 'new'} version of the file</span>
+    <button class="btn btn-sm" data-act="tab" data-v="flow">${ICON.left} Back to flow</button><button class="btn btn-sm btn-ghost" data-act="clear-focus">Close</button></div>`;
+  if (fv.error) return `${bar}<div class="binary">${esc(fv.error)}</div>`;
+  if (fv.text == null) return `${bar}<div class="binary">Loading ${esc(fv.file)}…</div>`;
+  const re = tokenRe(fv.file);
+  const lines = fv.text.replace(/\n$/, '').split('\n');
+  const rows = lines.map((t, i) => {
+    const num = i + 1;
+    const fc = num >= fv.a && num <= fv.b ? ' focus' : '';
+    return `<tr class="line ctx${fc}"><td class="ln">${num}</td><td class="sg"></td><td class="code">${renderCode(t, re)}</td></tr>`;
+  }).join('');
+  return `${bar}<div class="dfile"><div class="dfile-head"><span class="fstatus">read-only</span><span class="path">${esc(fv.file)}</span></div>
+    <table class="diff file-view"><colgroup><col class="ln"><col class="sg"><col></colgroup><tbody>${rows}</tbody></table></div>`;
+}
 
 function renderTopbar() {
   const { meta, cards } = S.data;
@@ -522,8 +565,8 @@ function renderTopbar() {
     <div class="progress-track"><span class="p-ok" style="width:${(ok / total) * 100}%"></span><span class="p-ch" style="width:${(ch / total) * 100}%"></span></div>
     <span>${ok + ch}/${cards.length} reviewed</span>`;
   const badge = $('#handoff-count');
-  badge.hidden = !S.actionable;
-  badge.textContent = S.actionable;
+  badge.hidden = !(S.actionable + S.questions);
+  badge.textContent = S.actionable + S.questions;
 }
 
 function renderHero() {
@@ -535,7 +578,9 @@ function renderHero() {
   const summary = (breakdown && breakdown.summary) || meta.description || '';
   const metaBits = [];
   if (meta.branch) metaBits.push(`${ICON.fork} <b>${esc(meta.branch)}</b>${meta.base ? ` → ${esc(meta.base)}` : ''}`);
-  if (meta.head) metaBits.push(`at <b class="mono">${esc(meta.head)}</b>`);
+  if (meta.baseSha && meta.base && meta.baseSha.slice(0, 7) !== meta.base) metaBits.push(`base at <b class="mono">${esc(meta.baseSha.slice(0, 7))}</b>`);
+  if (meta.head) metaBits.push(`head at <b class="mono">${esc(meta.head)}</b>`);
+  if (meta.round > 1) metaBits.push(`<b>round ${esc(meta.round)}</b>${S.data.rounds && S.data.rounds.length ? ` <span title="Earlier rounds are archived in .diffdeck/rounds/">(${S.data.rounds.length} earlier)</span>` : ''}`);
   if (meta.author) metaBits.push(`by <b>${esc(meta.author)}</b>`);
   if (meta.url) metaBits.push(`<a href="${esc(meta.url)}" target="_blank" rel="noopener">Open on GitHub ↗</a>`);
   metaBits.push(`prepared ${esc(new Date(meta.generatedAt).toLocaleString())}`);
@@ -634,6 +679,8 @@ function renderCard(card) {
   if (card.decisions.length) signals.push(`<span class="signal">${ICON.fork} ${card.decisions.length} design decision${card.decisions.length > 1 ? 's' : ''}</span>`);
   if (switched) signals.push(`<span class="signal accent">${switched} alternative${switched > 1 ? 's' : ''} preferred</span>`);
   if (comments) signals.push(`<span class="signal warm">${ICON.chat} ${comments}</span>`);
+  if (card.stale) signals.push(`<span class="signal warm" title="${esc(card.stale)}">Changed since round ${esc(S.data.meta.previousRound || '')}</span>`);
+  else if (card.carried) signals.push(`<span class="signal" title="The code of this card is the same as in round ${esc(card.carried)}">Unchanged since round ${esc(card.carried)}</span>`);
   const shownFiles = files.slice(0, 2).map((f) => `<span class="file-chip" title="${esc(f)}">${esc(f.split('/').pop())}</span>`).join('');
   return `
     <button class="card st-${cardStatus(card.id) || 'todo'}" style="${kindVar(card.kind)}" data-act="open" data-id="${esc(card.id)}">
@@ -773,18 +820,23 @@ function renderCommentRows(card, file, side, line) {
   let out = '';
   for (const l of commentsAt(file, side, line)) {
     if (S.composer && S.composer.editId === l.id) continue;
-    out += `<tr class="cmt"><td colspan="4"><div class="cbox">
-      <div class="who">Review note <span class="where">${esc(file)}:${line}</span></div>
+    const q = l.kind === 'question';
+    const replies = (S.data.replies || {})[l.id] || [];
+    out += `<tr class="cmt"><td colspan="4"><div class="cbox${q ? ' is-question' : ''}">
+      <div class="who">${q ? 'Question' : 'Requested change'} <span class="where">${esc(file)}:${line}</span></div>
       <div class="text">${esc(l.comment)}</div>
+      ${replies.map((r) => `<div class="reply"><div class="who">Agent reply${r.at ? ` <span class="where">${esc(new Date(r.at).toLocaleString())}</span>` : ''}</div><div class="text">${esc(r.text)}</div></div>`).join('')}
+      ${q && !replies.length ? '<div class="reply pending">Waiting for the agent to answer (hand off to agent).</div>' : ''}
       <div class="actions"><button class="btn btn-sm btn-ghost" data-act="edit-c" data-cid="${esc(l.id)}">Edit</button><button class="btn btn-sm btn-ghost" data-act="del-c" data-cid="${esc(l.id)}">Delete</button></div>
     </div></td></tr>`;
   }
   if (S.composer && S.composer.key === key) {
     const existing = S.composer.editId ? S.fb.lines.find((l) => l.id === S.composer.editId) : null;
-    out += `<tr class="cmt"><td colspan="4"><div class="cbox">
-      <div class="who">${existing ? 'Edit note' : 'New note'} <span class="where">${esc(file)}:${line}</span></div>
-      <textarea class="note" id="composer" rows="3" placeholder="What should change here? ⌘↵ to save">${esc(existing ? existing.comment : '')}</textarea>
-      <div class="actions"><button class="btn btn-sm btn-primary" data-act="save-c">Save note</button><button class="btn btn-sm btn-ghost" data-act="cancel-c">Cancel</button></div>
+    const q = S.composer.kind === 'question';
+    out += `<tr class="cmt"><td colspan="4"><div class="cbox${q ? ' is-question' : ''}">
+      <div class="who">${existing ? 'Edit' : 'New'} <span class="seg seg-sm"><button class="${q ? '' : 'on'}" data-act="c-kind" data-v="change">Request a change</button><button class="${q ? 'on' : ''}" data-act="c-kind" data-v="question">Ask a question</button></span> <span class="where">${esc(file)}:${line}</span></div>
+      <textarea class="note" id="composer" rows="3" placeholder="${q ? 'What do you want to know? The agent answers without changing code.' : 'What should change here?'} ⌘↵ to save">${esc(S.composer.draft != null ? S.composer.draft : existing ? existing.comment : '')}</textarea>
+      <div class="actions"><button class="btn btn-sm btn-primary" data-act="save-c">${q ? 'Save question' : 'Save note'}</button><button class="btn btn-sm btn-ghost" data-act="cancel-c">Cancel</button></div>
     </div></td></tr>`;
   }
   return out;
@@ -839,8 +891,12 @@ function renderMain(card) {
     </div>` : '';
   if (tab === 'flow') {
     return `
-      <div class="diff-toolbar">${tabs}<span class="hint">Click a step to jump to its code · click a ◇ decision to compare alternatives</span></div>
+      <div class="diff-toolbar">${tabs}<span class="hint">Steps marked ‹› open their code · steps tied to a design choice also open it in the side panel · plain steps have no code linked</span></div>
       <div class="diff-scroll flow-scroll">${diagramHtml('logic', { dir: 'TB', nodes: card.flow.nodes, edges: card.flow.edges }, 'logic', card)}</div>`;
+  }
+  if (S.fileView) {
+    return `<div class="diff-toolbar">${tabs}<span class="hint">This step points at code the change does not touch</span></div>
+      <div class="diff-scroll">${renderFileView(S.fileView)}</div>`;
   }
   const focusBar = S.focus ? `<div class="focus-bar"><span class="fb-dot"></span><span>Step <b>${esc(S.focus.label || '')}</b> · <span class="mono">${esc(S.focus.file)}:${S.focus.a}–${S.focus.b}</span></span>
       ${hasFlow ? `<button class="btn btn-sm" data-act="tab" data-v="flow">${ICON.left} Back to flow</button>` : ''}<button class="btn btn-sm btn-ghost" data-act="clear-focus">Clear</button></div>` : '';
@@ -915,6 +971,7 @@ function openCard(id) {
   S.openId = id;
   S.composer = null;
   S.focus = null;
+  S.fileView = null;
   S.sheetTab = card && card.flow ? 'flow' : 'diff';
   history.replaceState(null, '', `#card=${encodeURIComponent(id)}`);
   $('#sheet').dataset.card = '';
@@ -944,7 +1001,7 @@ const GH = { tab: 'agent', loading: false, status: null, preview: null, login: n
 const EVENT_LABEL = { COMMENT: 'Comment', REQUEST_CHANGES: 'Request changes', APPROVE: 'Approve' };
 
 function agentPanel() {
-  const generic = 'Read .diffdeck/feedback.md and implement every requested change; leave approved cards untouched.';
+  const generic = 'Read .diffdeck/feedback.md: implement every requested change, answer the questions in .diffdeck/replies.json, leave approved cards untouched, then run diffdeck refresh.';
   const prompts = [['Claude Code', '/diffdeck-apply'], ['Cursor', '/diffdeck-apply'], ['OpenCode', '/diffdeck-apply'], ['Any agent', generic]];
   return `
     <h4>Tell your agent</h4>
@@ -1046,6 +1103,7 @@ function renderDrawer() {
     <div class="drawer-body">
       <div class="summary-tiles">
         <div class="stat"><div class="v" id="tile-actionable">${S.actionable}</div><div class="l">requested changes</div></div>
+        ${S.questions ? `<div class="stat"><div class="v">${S.questions}</div><div class="l">questions</div></div>` : ''}
         <div class="stat"><div class="v">${approved}</div><div class="l">approved cards</div></div>
         <div class="stat"><div class="v">${todo}</div><div class="l">not yet reviewed</div></div>
       </div>
@@ -1134,6 +1192,7 @@ async function saveNow() {
     if (!res.ok) throw new Error(body.error || res.statusText);
     S.markdown = body.markdown;
     S.actionable = body.actionable;
+    S.questions = body.questions || 0;
     setSaveState(`Saved ${new Date(body.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
     renderTopbar();
     const pre = $('#md-preview');
@@ -1186,10 +1245,10 @@ function commitComposer() {
   const c = S.composer;
   if (c.editId) {
     const l = S.fb.lines.find((x) => x.id === c.editId);
-    if (l) l.comment = text;
+    if (l) { l.comment = text; l.kind = c.kind === 'question' ? 'question' : 'change'; }
     if (!text) S.fb.lines = S.fb.lines.filter((x) => x.id !== c.editId);
   } else if (text) {
-    S.fb.lines.push({ id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, cardId: S.openId, file: c.file, side: c.side, line: c.line, code: c.code, comment: text });
+    S.fb.lines.push({ id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, cardId: S.openId, file: c.file, side: c.side, line: c.line, code: c.code, comment: text, kind: c.kind === 'question' ? 'question' : 'change' });
   }
   S.composer = null;
   renderSheet();
@@ -1217,8 +1276,8 @@ document.addEventListener('click', (e) => {
       try { localStorage.setItem('diffdeck.view', S.view); } catch { /* ignore */ }
       renderPage();
       break;
-    case 'tab': S.sheetTab = t.dataset.v; renderSheet(); break;
-    case 'clear-focus': S.focus = null; renderSheet(); break;
+    case 'tab': S.sheetTab = t.dataset.v; S.fileView = null; renderSheet(); break;
+    case 'clear-focus': S.focus = null; S.fileView = null; renderSheet(); break;
     case 'zoom': {
       const vp = S.vps[t.dataset.name];
       if (vp) { if (t.dataset.v === 'fit') vp.fit(); else vp.zoom(t.dataset.v === 'in' ? 1.2 : 1 / 1.2); }
@@ -1268,10 +1327,15 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'save-c': commitComposer(); break;
+    case 'c-kind': {
+      const ta = $('#composer');
+      if (S.composer) { S.composer.kind = t.dataset.v; S.composer.draft = ta ? ta.value : null; renderSheet(); }
+      break;
+    }
     case 'cancel-c': S.composer = null; renderSheet(); break;
     case 'edit-c': {
       const l = S.fb.lines.find((x) => x.id === t.dataset.cid);
-      if (l) { S.composer = { key: `${l.file}|${l.side}|${l.line}`, file: l.file, side: l.side, line: l.line, code: l.code, editId: l.id }; renderSheet(); }
+      if (l) { S.composer = { key: `${l.file}|${l.side}|${l.line}`, file: l.file, side: l.side, line: l.line, code: l.code, editId: l.id, kind: l.kind || 'change' }; renderSheet(); }
       break;
     }
     case 'del-c': S.fb.lines = S.fb.lines.filter((x) => x.id !== t.dataset.cid); renderSheet(); scheduleSave(); break;
@@ -1341,8 +1405,9 @@ async function loadState(initial) {
   const res = await fetch('api/state');
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || res.statusText);
+  const diffChanged = S.data && S.data.version.split(':')[0] !== data.version.split(':')[0];
   S.data = data;
-  if (initial) S.fb = data.feedback;
+  if (initial || diffChanged) { S.fb = data.feedback; S.focus = null; S.fileView = null; S.composer = null; }
   renderPage();
   if (S.openId) {
     if (data.cards.some((c) => c.id === S.openId)) renderSheet(); else closeSheet();
@@ -1354,8 +1419,12 @@ async function poll() {
     const res = await fetch('api/version');
     const { version } = await res.json();
     if (S.data && version !== S.data.version) {
+      const before = S.data.version.split(':');
       await loadState(false);
-      toast(S.data.breakdown ? 'Breakdown updated' : 'Diff updated');
+      const after = S.data.version.split(':');
+      if (before[0] !== after[0]) { toast(`Round ${S.data.meta.round || ''}: the code changed`); saveNow(); }
+      else if (before[1] !== after[1]) toast(S.data.breakdown ? 'Breakdown updated' : 'Diff updated');
+      else toast('The agent replied');
     }
   } catch { /* server stopped; keep the page as is */ }
 }

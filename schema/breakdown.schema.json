@@ -72,6 +72,14 @@
             "type": "string",
             "description": "Why the risk is what it is."
           },
+          "stale": {
+            "type": "string",
+            "description": "Set by diffdeck when the card's code changed since the last round. Update the card, then delete this field."
+          },
+          "carried": {
+            "type": "integer",
+            "description": "Set by diffdeck: the card's code is unchanged since this round. Leave it as is."
+          },
           "summary": {
             "type": "string",
             "description": "What changed in this card, in plain words."

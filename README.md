@@ -28,6 +28,7 @@ Runs on your machine. No dependencies. Node 18+.
   - [2. Break down a change](#2-break-down-a-change)
   - [3. Review in the browser](#3-review-in-the-browser)
   - [4. Finish the review](#4-finish-the-review)
+  - [Review rounds](#review-rounds)
   - [Reviewing several repositories](#reviewing-several-repositories)
 - [Commands](#commands)
 - [Features](#features)
@@ -97,6 +98,36 @@ npm install -g github:AmeyaKasture/diffdeck
 diffdeck --version
 ```
 
+If that fails with a permission error (`EACCES`), do not use `sudo`. Install into your home
+folder instead:
+
+```sh
+npm config set prefix ~/.local
+npm install -g github:AmeyaKasture/diffdeck
+```
+
+`~/.local/bin` must be on your `PATH`. If `diffdeck --version` is not found, add this line to
+`~/.zshrc` or `~/.bashrc` and open a new terminal:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+If your Node is older than 18 (`node --version`), install a current one with
+[nvm](https://github.com/nvm-sh/nvm) first:
+
+```sh
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+nvm install 22
+npm install -g github:AmeyaKasture/diffdeck
+```
+
+Then check that everything is in place, including that your agent can find `diffdeck`:
+
+```sh
+diffdeck doctor
+```
+
 **Upgrade**
 
 ```sh
@@ -113,6 +144,7 @@ review server so it runs the new version. Your reviews keep their addresses.
 **Uninstall**
 
 ```sh
+diffdeck init --uninstall     # in each repository: remove the slash commands
 diffdeck stop --all           # stop the review server
 npm uninstall -g diffdeck
 rm -rf ~/.diffdeck            # list of reviewed repositories
@@ -197,8 +229,13 @@ The review is open at http://127.0.0.1:4777/your-repo/ (all reviews: http://127.
 
 - **Flow diagram** (home screen): hover a node to trace its connections; click it to open that change
 - **Walk through**: steps through the changes in the suggested reading order
-- **Logic flow**: click a step to jump to its code; click a decision diamond to compare alternatives
-- **Code diff**: click a line number to leave a note on that line
+- **Logic flow**: click a step marked `<>` to jump to its code; a step tied to a design decision
+  also opens the decision beside the code. A step that points at code the change does not touch
+  opens the whole file with those lines highlighted. Steps drawn with a dotted border have no
+  code linked
+- **Code diff**: click a line number to leave a note on that line, either **Request a change**
+  or **Ask a question**. The agent answers questions without changing code, and its answers
+  appear under your question
 - **Prefer this approach**: asks for a different design alternative
 - **Approve** or **Request changes** on each card
 - **Cards** view: the same changes as a list
@@ -215,7 +252,11 @@ Use one of the two buttons at the top right of the page.
 /diffdeck-apply
 ```
 
-The agent implements every requested change and leaves approved cards untouched.
+The agent:
+
+1. implements every requested change and leaves approved cards untouched
+2. answers your questions (they appear under each question in the page)
+3. runs `diffdeck refresh`, so the page shows the new code as the next review round
 
 **Post on GitHub.** Your notes become a review on the pull request:
 
@@ -232,6 +273,24 @@ diffdeck post                                 # preview; nothing is sent
 diffdeck post --yes                           # post it
 diffdeck post --yes --event request-changes   # choose the review type
 ```
+
+### Review rounds
+
+After the code changes, collect the same PR, branch or commit again:
+
+```sh
+diffdeck refresh
+```
+
+- The previous round is archived in `.diffdeck/rounds/<n>/` (diff, breakdown, feedback and answers).
+- Cards whose code is byte-for-byte the same are kept, with their approvals, and marked
+  *Unchanged since round n* in the page.
+- Cards whose code changed are marked *Changed since round n*. Your agent only rewrites those,
+  following `.diffdeck/refresh.md`.
+- A pull request only changes once the new commits are pushed. A commit never changes; review
+  the new commit instead.
+
+`/diffdeck-apply` runs `diffdeck refresh` for you at the end.
 
 ### Reviewing several repositories
 
@@ -309,7 +368,9 @@ diffdeck review a1b2c3d
 |---|---|
 | `diffdeck init` | Add `/diffdeck-breakdown` and `/diffdeck-apply` for Claude Code, Cursor and OpenCode |
 | `diffdeck init <agent>` | Only for `claude`, `cursor` or `opencode` |
+| `diffdeck init --uninstall` | Remove the command files that `init` wrote |
 | `diffdeck prepare <target>` | Collect the diff only (this is what agents run) |
+| `diffdeck refresh` | Collect the same PR, branch or commit again after changes; keeps unchanged cards and their approvals |
 | `diffdeck validate` | Check the agent's `breakdown.json` and list any errors |
 | `diffdeck feedback` | Print your feedback (`.diffdeck/feedback.md`) |
 
@@ -319,6 +380,7 @@ diffdeck review a1b2c3d
 |---|---|
 | `diffdeck upgrade` | Update to the latest version |
 | `diffdeck upgrade --force` | Reinstall the current version |
+| `diffdeck doctor` | Check Node, whether agents can find `diffdeck`, the GitHub login, a stale base branch and the slash commands |
 | `diffdeck --version` | Print the installed version |
 | `diffdeck --help` | List every command |
 
@@ -453,9 +515,18 @@ All files live in `.diffdeck/` at the repository root. diffdeck adds that folder
 | `breakdown.json` | agent | Diagrams, change cards, flowcharts and design decisions |
 | `feedback.json` | browser | Your review state, restored when you reopen it |
 | `feedback.md` | browser | The hand-off for the agent |
+| `replies.json` | agent | Answers to your questions, shown under each one |
+| `refresh.md` | `refresh` | Which cards the agent has to update in a new round |
+| `rounds/<n>/` | `prepare`, `refresh` | Earlier rounds: diff, breakdown, feedback and answers |
 
-When you prepare a different diff, the old breakdown and feedback are kept as `*.prev`,
-because their line references no longer match.
+When the diff changes, the previous round moves to `rounds/<n>/`. For the same PR, branch or
+commit, the cards that still match are carried into the new round; for a different one the
+review starts from scratch.
+
+**Which base is used.** A branch is compared with the default branch (`origin/HEAD`, usually
+`main`). diffdeck uses `origin/main` when your local `main` is behind it, so a `main` you never
+pulled does not add unrelated files. `prepare` prints the base and head commits it used, and
+warns when the base you passed is behind origin.
 
 <details>
 <summary><b>The breakdown format</b></summary>
@@ -499,6 +570,8 @@ The full format is in [`schema/breakdown.schema.json`](schema/breakdown.schema.j
 - Node `type`: `actor`, `component`, `service`, `data`, `external`
 - Flowchart `shape`: `start`, `end`, `step`, `decision`, `io`
 - `change`: `added`, `modified`, `removed`, `unchanged`
+- `stale` and `carried` on a card are set by diffdeck between rounds; the agent deletes
+  `stale` once it has updated the card
 </details>
 
 ---
@@ -510,6 +583,7 @@ The full format is in [`schema/breakdown.schema.json`](schema/breakdown.schema.j
 ```sh
 diffdeck --help               # every command and option
 diffdeck --version            # the installed version
+diffdeck doctor               # check the setup and print fixes
 diffdeck list                 # where your reviews are
 diffdeck validate             # what is wrong with a breakdown
 ```
@@ -527,8 +601,42 @@ npm prefix -g                 # its bin/ folder must be on your PATH
 
 **`EACCES` permission error during install or upgrade**
 
-Your global npm folder needs administrator rights. Either run the command with `sudo`, or
-[set npm up to install without it](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally).
+Your global npm folder needs administrator rights. Install into your home folder instead of
+using `sudo`, and make sure `~/.local/bin` is on your `PATH`:
+
+```sh
+npm config set prefix ~/.local
+npm install -g github:AmeyaKasture/diffdeck
+```
+
+**`diffdeck needs Node 18 or newer`**
+
+Install a current Node with nvm (see [Installation](#installation)), then install diffdeck again.
+
+**The agent says `diffdeck: command not found`, but it works in your terminal**
+
+The agent's shell does not load your shell setup (for example nvm). Check, then run `init`
+again: the slash commands then include the full path to diffdeck as a fallback.
+
+```sh
+diffdeck doctor
+diffdeck init
+```
+
+**The diff has hundreds of files that are not part of the change**
+
+The base branch is out of date. diffdeck already prefers `origin/main` over a local `main`
+that is behind, but `origin/main` itself is only as fresh as your last fetch:
+
+```sh
+git fetch
+diffdeck prepare <branch> --base origin/main
+```
+
+**Clicking a step in a flowchart does nothing**
+
+That step has no code linked (it has a dotted border). `diffdeck validate` lists such steps;
+ask the agent to add a `ref` to them.
 
 **The agent says `diffdeck prepare` does not accept a PR link, a branch or a commit**
 

@@ -372,6 +372,13 @@ tr.cmt td { background: var(--panel-2) !important; padding: 8px 12px 10px 122px 
 .cbox .who .where { font: 11.5px var(--mono); color: var(--ink-3); font-weight: 400; }
 .cbox .text { white-space: pre-wrap; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 8px 10px; }
 .cbox .actions { display: flex; gap: 6px; margin-top: 6px; }
+.cbox.is-question .text { border-left-color: var(--medium); }
+.cbox .reply { margin: 6px 0 0 18px; }
+.cbox .reply .text { border-left-color: #5DBB86; background: #F6FBF8; }
+.cbox .reply.pending { font-size: 12px; color: var(--ink-3); font-style: italic; }
+.seg.seg-sm { padding: 2px; }
+.seg.seg-sm button { padding: 2px 8px; font-size: 11.5px; }
+table.file-view tr.line td.code { white-space: pre; }
 .binary { padding: 18px; color: var(--ink-3); font-size: 13px; }
 .collapsed-note { padding: 10px 16px; font-size: 12.5px; color: var(--ink-3); }
 
@@ -445,6 +452,8 @@ pre.md {
 .gnode.sh-pill.ch-unchanged .shape { fill: #F1F0EC; }
 .gnode .ticon { color: var(--ink-3); }
 .gnode.clickable { cursor: pointer; }
+.gnode.inert { cursor: default; }
+.gnode.inert:not(.sh-pill) .shape { stroke-dasharray: 2 3; }
 .gnode.clickable:hover .shape, .gnode.clickable:focus .shape { stroke: var(--accent); stroke-width: 2; }
 .gnode:focus { outline: none; }
 .gnode { transition: opacity .18s; }

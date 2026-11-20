@@ -1,6 +1,6 @@
 {
   "name": "diffdeck",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Review a git diff or PR as an interactive flow diagram: clickable system flow, per-change logic flowcharts, design alternatives with pros and cons, and feedback any coding agent can implement.",
   "keywords": ["git", "diff", "code-review", "pull-request", "flowchart", "diagram", "claude-code", "cursor", "opencode", "ai-agents"],
   "homepage": "https://github.com/AmeyaKasture/diffdeck#readme",

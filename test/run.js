@@ -315,6 +315,40 @@ test('questions are listed separately with their replies', () => {
   assert.match(markdown, /replies\.json/);
 });
 
+test('init writes commands to the home folder and none to the repository', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFileSync } = require('child_process');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'diffdeck-init-'));
+  const home = path.join(tmp, 'home');
+  const repo = path.join(tmp, 'repo');
+  fs.mkdirSync(home);
+  fs.mkdirSync(path.join(repo, '.claude', 'commands'), { recursive: true });
+  const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+  // A copy left by an older version that wrote into repositories.
+  fs.writeFileSync(path.join(repo, '.claude', 'commands', 'diffdeck-breakdown.md'), 'old diffdeck command');
+  const run = (...a) => execFileSync(process.execPath, [path.join(__dirname, '..', 'bin', 'diffdeck.js'), ...a], { cwd: repo, encoding: 'utf8', env: { ...process.env, HOME: home } });
+
+  run('init', '--quiet');
+  for (const dir of ['.claude/commands', '.cursor/commands', '.config/opencode/command']) {
+    assert.ok(fs.existsSync(path.join(home, dir, 'diffdeck-breakdown.md')), dir);
+  }
+  assert.strictEqual(git('status', '--porcelain'), '');
+  assert.ok(!fs.existsSync(path.join(repo, '.claude')));
+
+  run('init', '--repo', 'claude');
+  assert.ok(fs.existsSync(path.join(repo, '.claude', 'commands', 'diffdeck-apply.md')));
+  assert.strictEqual(git('status', '--porcelain'), '');
+
+  run('init', '--uninstall');
+  assert.ok(!fs.existsSync(path.join(home, '.claude')));
+  assert.ok(!fs.existsSync(path.join(repo, '.claude')));
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n     ${e.message}`); }

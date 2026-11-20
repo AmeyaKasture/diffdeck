@@ -68,8 +68,7 @@ Works with Claude Code, Cursor and OpenCode out of the box, and with any other a
 # 1. Install (once per machine)
 npm install -g github:AmeyaKasture/diffdeck
 
-# 2. Set up your repository (once per repository)
-cd your-repo
+# 2. Add the slash commands for your user (once per machine; nothing is written to your repositories)
 diffdeck init
 ```
 
@@ -144,13 +143,14 @@ review server so it runs the new version. Your reviews keep their addresses.
 **Uninstall**
 
 ```sh
-diffdeck init --uninstall     # in each repository: remove the slash commands
+diffdeck init --uninstall     # remove the slash commands from your home folder
 diffdeck stop --all           # stop the review server
 npm uninstall -g diffdeck
 rm -rf ~/.diffdeck            # list of reviewed repositories
 ```
 
-Each repository you reviewed also has a `.diffdeck/` folder, which you can delete.
+Each repository you reviewed also has a `.diffdeck/` folder, which you can delete. git ignores it
+(diffdeck lists it in `.git/info/exclude`), so it never shows up in `git status`.
 
 ---
 
@@ -160,15 +160,14 @@ A review has four steps:
 
 | Step | Where | What you do |
 |---|---|---|
-| 1 | terminal | `diffdeck init` (once per repository) |
+| 1 | terminal | `diffdeck init` (once per machine) |
 | 2 | your agent | `/diffdeck-breakdown <PR link, branch or commit>` |
 | 3 | browser | explore, comment, approve, pick alternatives |
 | 4 | browser, then agent | **Hand off to agent** and run `/diffdeck-apply`, or **Post on GitHub** |
 
-### 1. Set up a repository
+### 1. Add the slash commands
 
 ```sh
-cd your-repo
 diffdeck init                 # all supported agents
 diffdeck init claude          # or only one: claude, cursor or opencode
 ```
@@ -178,14 +177,22 @@ This adds two slash commands:
 - `/diffdeck-breakdown` analyses a change and opens the review
 - `/diffdeck-apply` implements the feedback you leave in the review
 
-The files are written to:
+The files go in your home folder, where each agent looks for per-user commands, so every
+repository can use them and none of your repositories gain any files:
 
-- `.claude/commands/` for Claude Code
-- `.cursor/commands/` for Cursor
-- `.opencode/command/` for OpenCode
+- `~/.claude/commands/` for Claude Code
+- `~/.cursor/commands/` for Cursor
+- `~/.config/opencode/command/` for OpenCode
 
-Commit them if your team should have the commands too. For any other agent, `diffdeck init`
-prints a short snippet to paste into `AGENTS.md`.
+Run it from inside a repository that has copies from an older diffdeck (in `.claude/commands/`
+and so on) and it deletes those copies, unless they are committed to git.
+
+To keep the commands with one repository instead, use `diffdeck init --repo`. It writes them to
+`.claude/commands/`, `.cursor/commands/` and `.opencode/command/` and lists them in
+`.git/info/exclude`, so they stay out of `git status`. To share them with your team, commit them
+(`git add -f`).
+
+For any other agent, `diffdeck init` prints a short snippet to paste into `AGENTS.md`.
 
 ### 2. Break down a change
 
@@ -366,9 +373,10 @@ diffdeck review a1b2c3d
 
 | Command | What it does |
 |---|---|
-| `diffdeck init` | Add `/diffdeck-breakdown` and `/diffdeck-apply` for Claude Code, Cursor and OpenCode |
+| `diffdeck init` | Add `/diffdeck-breakdown` and `/diffdeck-apply` for Claude Code, Cursor and OpenCode, in your home folder |
 | `diffdeck init <agent>` | Only for `claude`, `cursor` or `opencode` |
-| `diffdeck init --uninstall` | Remove the command files that `init` wrote |
+| `diffdeck init --repo` | Put the commands in this repository instead (ignored by git locally) |
+| `diffdeck init --uninstall` | Remove the command files that `init` wrote, from your home folder and this repository |
 | `diffdeck prepare <target>` | Collect the diff only (this is what agents run) |
 | `diffdeck refresh` | Collect the same PR, branch or commit again after changes; keeps unchanged cards and their approvals |
 | `diffdeck validate` | Check the agent's `breakdown.json` and list any errors |
@@ -640,7 +648,7 @@ ask the agent to add a `ref` to them.
 
 **The agent says `diffdeck prepare` does not accept a PR link, a branch or a commit**
 
-You are on an old version. Upgrade, then refresh the repository's slash commands:
+You are on an old version. Upgrade, then refresh the slash commands:
 
 ```sh
 diffdeck upgrade
